@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>论文总结管理器</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">summarize-paper library</p>
+        <h1>论文总结管理器</h1>
+      </div>
+      <div class="header-actions">
+        <label class="button primary">
+          <input id="fileInput" type="file" accept=".xlsx,.xls,.json,.md,.markdown" multiple />
+          导入文件
+        </label>
+        <button id="pasteButton" class="button">粘贴 JSON</button>
+        <button id="exportButton" class="button">导出库</button>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <section class="toolbar" aria-label="文献筛选">
+        <div class="search-wrap">
+          <label for="searchInput">搜索</label>
+          <input id="searchInput" type="search" placeholder="标题、总结、证据、核查建议" autocomplete="off" />
+        </div>
+        <div class="select-wrap">
+          <label for="dimensionFilter">维度</label>
+          <select id="dimensionFilter">
+            <option value="all">全部维度</option>
+          </select>
+        </div>
+        <div class="select-wrap">
+          <label for="typeFilter">类型</label>
+          <select id="typeFilter">
+            <option value="all">全部类型</option>
+          </select>
+        </div>
+        <div class="select-wrap">
+          <label for="confidenceFilter">置信度</label>
+          <select id="confidenceFilter">
+            <option value="all">全部置信度</option>
+          </select>
+        </div>
+        <button id="clearFiltersButton" class="button compact">重置</button>
+      </section>
+
+      <section class="stats-grid" aria-label="统计概览">
+        <article class="stat-card accent-teal">
+          <span>文献</span>
+          <strong id="paperCount">0</strong>
+        </article>
+        <article class="stat-card accent-gold">
+          <span>总结行</span>
+          <strong id="rowCount">0</strong>
+        </article>
+        <article class="stat-card accent-green">
+          <span>原文依据</span>
+          <strong id="sourceBackedCount">0</strong>
+        </article>
+        <article class="stat-card accent-coral">
+          <span>合理推测</span>
+          <strong id="inferredCount">0</strong>
+        </article>
+      </section>
+
+      <section id="dropZone" class="drop-zone">
+        <div>
+          <strong>拖入 summarize-paper 输出文件</strong>
+          <span>支持 Excel、JSON、Markdown；数据保存在当前浏览器</span>
+        </div>
+      </section>
+
+      <section class="library-head">
+        <div>
+          <h2>文献卡片</h2>
+          <p id="resultSummary">暂无文献</p>
+        </div>
+        <button id="clearLibraryButton" class="text-button">清空本地库</button>
+      </section>
+
+      <section id="paperGrid" class="paper-grid" aria-live="polite"></section>
+
+      <section id="emptyState" class="empty-state">
+        <h2>还没有导入论文总结</h2>
+        <p>把 skill 生成的 `.xlsx`、`.json` 或 `.md` 文件拖到这里，第一张卡片就会出现。</p>
+      </section>
+    </main>
+
+    <aside id="detailPanel" class="detail-panel" aria-hidden="true" aria-label="文献详情">
+      <div class="detail-card">
+        <div class="detail-header">
+          <div>
+            <p class="eyebrow" id="detailSource">paper summary</p>
+            <h2 id="detailTitle"></h2>
+          </div>
+          <button id="closeDetailButton" class="icon-button" aria-label="关闭详情">×</button>
+        </div>
+        <div id="detailMeta" class="detail-meta"></div>
+        <div id="detailRows" class="detail-rows"></div>
+      </div>
+    </aside>
+
+    <dialog id="pasteDialog" class="paste-dialog">
+      <form method="dialog">
+        <div class="dialog-header">
+          <h2>粘贴 JSON</h2>
+          <button class="icon-button" value="cancel" aria-label="关闭">×</button>
+        </div>
+        <textarea id="pasteText" placeholder='{"paper_title":"Paper title","rows":[...]}'></textarea>
+        <div class="dialog-actions">
+          <button class="button" value="cancel">取消</button>
+          <button id="pasteImportButton" class="button primary" value="default">导入</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
