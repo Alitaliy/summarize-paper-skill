@@ -39,7 +39,7 @@ Use this skill to summarize one academic paper from the user-provided source. Ex
 7. Add cautious inferred items only after all original-content items, and label them clearly as `合理推测`.
 8. Produce the Markdown output first, grouping the claim list under dimension headings.
 9. Create the Excel output using `scripts/write_paper_summary_excel.py` when file creation is available.
-10. Archive the generated Markdown, JSON, and Excel files using `scripts/archive_summary_outputs.py` when file creation is available, so the literature management webpage can auto-discover the new paper.
+10. Archive the generated Markdown, JSON, and Excel files using `scripts/archive_summary_outputs.py` when file creation is available, so the literature management webpage can auto-discover the new paper. Prefer a local structure where one paper folder contains the source PDF/text extraction and the generated summary outputs; the webpage will only import summary output files.
 
 ## Markdown Output
 
@@ -152,9 +152,11 @@ Archive behavior:
 - If `SUMMARIZE_PAPER_LIBRARY_DIR` is set, archive into that directory.
 - Otherwise archive into `~/Documents/summarize-paper-library/inbox` when the Documents folder exists.
 - Otherwise archive into `~/.summarize-paper-library/inbox`.
-- Put each paper in a timestamped subfolder and keep `summary.json`, `summary.md`, `summary.xlsx`, and `manifest.json` together.
+- Put each paper in a stable paper-title subfolder and keep `summary.json`, `summary.md`, `summary.xlsx`, and `manifest.json` together.
+- Use `--folder-name "Author - Year - Title"` when you want the folder name to match a manually curated `paper/<paper folder>/...` library.
+- Use `--timestamped` only when versioned runs should be kept in separate folders.
 
-The webpage can monitor the archive inbox and automatically refresh when new skill outputs appear.
+The webpage can monitor the archive inbox or the parent `paper` folder and automatically refresh when new skill outputs appear. It recursively scans subfolders and imports only `summary.*`, `paper_summary.*`, and `*_paper_summary.*` files, ignoring PDFs and extracted text files.
 
 ## Quality Check
 

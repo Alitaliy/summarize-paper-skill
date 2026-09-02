@@ -16,7 +16,10 @@ const HEADER_MAP = new Map([
   ["后期核查建议", "review_suggestion"],
 ]);
 const SUPPORTED_FILE_RE = /\.(xlsx|xls|json|md|markdown)$/i;
+const WATCH_OUTPUT_FILE_RE = /(^|\/)(summary|paper_summary|[^/]+_paper_summary)\.(xlsx|xls|json|md|markdown)$/i;
 const IGNORED_IMPORT_RE = /(^|\/)(manifest|package-lock|package)\.json$/i;
+const IGNORED_DIRECTORY_RE = /(^|\/)(\.git|node_modules|__pycache__|\.tmp-chrome-[^/]+)$/i;
+const WATCH_FILE_PRIORITY = { ".json": 1, ".xlsx": 2, ".xls": 2, ".md": 3, ".markdown": 3 };
 
 let library = [];
 let filters = { query: "", dimension: "all", type: "all", confidence: "all" };
@@ -26,6 +29,10 @@ let lastScanSignature = "";
 let scanning = false;
 let lastScanAt = null;
 let watchedFileCount = 0;
+let watchedFolderCount = 0;
+let watchedImportFileCount = 0;
+let skippedScanIssueCount = 0;
+let importErrorCount = 0;
 
 const els = {};
 
@@ -196,6 +203,7 @@ async function chooseWatchDirectory() {
 
   try {
     watchedDirectoryHandle = await window.showDirectoryPicker({ mode: "read" });
+    lastScanSignature = "";
     await saveDirectoryHandle(watchedDirectoryHandle);
     await startWatchingDirectory(true);
   } catch (error) {
@@ -239,27 +247,32 @@ async function startWatchingDirectory(showToast) {
 
   clearInterval(scanTimer);
   updateWatchStatus("scanning");
-  await scanWatchedDirectory({ showToast });
+  const started = await scanWatchedDirectory({ showToast });
+  if (!started) return;
   scanTimer = setInterval(() => scanWatchedDirectory({ showToast: false }), SCAN_INTERVAL_MS);
   updateWatchStatus("watching");
 }
 
 async function scanWatchedDirectory({ showToast }) {
-  if (!watchedDirectoryHandle || scanning) return;
+  if (!watchedDirectoryHandle || scanning) return false;
   scanning = true;
   try {
+    const scanStats = createScanStats();
     const files = [];
-    for await (const item of walkDirectory(watchedDirectoryHandle)) {
-      if (SUPPORTED_FILE_RE.test(item.path) && !IGNORED_IMPORT_RE.test(item.path)) files.push(item);
-    }
+    for await (const item of walkSummaryOutputFiles(watchedDirectoryHandle, "", scanStats)) files.push(item);
     files.sort((a, b) => a.path.localeCompare(b.path, "zh-CN"));
+    const importFiles = selectPreferredSummaryFiles(files);
     const signature = files.map((item) => `${item.path}:${item.file.size}:${item.file.lastModified}`).join("|");
     watchedFileCount = files.length;
+    watchedFolderCount = scanStats.folders.size;
+    watchedImportFileCount = importFiles.length;
+    skippedScanIssueCount = scanStats.skipped.length;
+    importErrorCount = 0;
 
-    if (signature && signature !== lastScanSignature) {
+    if (signature && (signature !== lastScanSignature || showToast)) {
       const papers = [];
       const errors = [];
-      for (const item of files) {
+      for (const item of importFiles) {
         try {
           const parsed = await parseFile(item.file, item.path);
           papers.push(...parsed);
@@ -267,29 +280,80 @@ async function scanWatchedDirectory({ showToast }) {
           errors.push(`${item.path}: ${error.message}`);
         }
       }
+      importErrorCount = errors.length;
       mergePapers(papers, "自动扫描", { forceToast: showToast, quietWhenNoChange: !showToast });
       if (errors.length && showToast) toast(`部分文件未导入：${errors.slice(0, 3).join("；")}`);
-      lastScanSignature = signature;
+      if (papers.length || errors.length < importFiles.length) lastScanSignature = signature;
     }
 
     lastScanAt = new Date();
     updateWatchStatus("watching");
+    return true;
   } catch (error) {
     updateWatchStatus("error", error.message);
+    return false;
   } finally {
     scanning = false;
   }
 }
 
-async function* walkDirectory(directoryHandle, prefix = "") {
-  for await (const [name, handle] of directoryHandle.entries()) {
-    const path = prefix ? `${prefix}/${name}` : name;
-    if (handle.kind === "file") {
-      yield { path, file: await handle.getFile() };
-    } else if (handle.kind === "directory") {
-      yield* walkDirectory(handle, path);
+function createScanStats() {
+  return { folders: new Set(), skipped: [] };
+}
+
+async function* walkSummaryOutputFiles(directoryHandle, prefix = "", stats = createScanStats()) {
+  try {
+    for await (const [name, handle] of directoryHandle.entries()) {
+      const path = prefix ? `${prefix}/${name}` : name;
+      if (handle.kind === "directory") {
+        if (IGNORED_DIRECTORY_RE.test(path)) continue;
+        stats.folders.add(path);
+        yield* walkSummaryOutputFiles(handle, path, stats);
+      } else if (handle.kind === "file" && isWatchOutputFile(path)) {
+        try {
+          yield { path, file: await handle.getFile() };
+        } catch (error) {
+          stats.skipped.push({ path, message: error.message || error.name || "无法读取文件" });
+        }
+      }
     }
+  } catch (error) {
+    if (!prefix) throw error;
+    stats.skipped.push({ path: prefix, message: error.message || error.name || "无法读取目录" });
   }
+}
+
+function isWatchOutputFile(path) {
+  return WATCH_OUTPUT_FILE_RE.test(path) && !IGNORED_IMPORT_RE.test(path);
+}
+
+function selectPreferredSummaryFiles(files) {
+  const grouped = new Map();
+  for (const item of files) {
+    const key = summaryGroupKey(item.path);
+    const existing = grouped.get(key);
+    if (!existing || compareSummaryPreference(item, existing) < 0) grouped.set(key, item);
+  }
+  return [...grouped.values()].sort((a, b) => a.path.localeCompare(b.path, "zh-CN"));
+}
+
+function summaryGroupKey(path) {
+  const parts = path.split("/");
+  const fileName = parts.pop() || path;
+  const parent = parts.join("/");
+  if (parent) return parent.toLowerCase();
+  return fileName.replace(/\.(xlsx|xls|json|md|markdown)$/i, "").replace(/(?:_?paper)?_?summary$/i, "").toLowerCase() || fileName.toLowerCase();
+}
+
+function compareSummaryPreference(a, b) {
+  const byPriority = summaryFilePriority(a.path) - summaryFilePriority(b.path);
+  if (byPriority) return byPriority;
+  return b.file.lastModified - a.file.lastModified;
+}
+
+function summaryFilePriority(path) {
+  const suffix = path.toLowerCase().match(/\.(xlsx|xls|json|md|markdown)$/)?.[0] || "";
+  return WATCH_FILE_PRIORITY[suffix] || 99;
 }
 
 async function ensureReadPermission(handle, requestIfNeeded) {
@@ -752,10 +816,14 @@ function updateWatchStatus(status, message = "") {
   els.watchPanel.dataset.status = status;
   if (status === "watching") {
     els.watchTitle.textContent = `正在监听：${watchedDirectoryHandle?.name || "已选择文件夹"}`;
-    els.watchText.textContent = "页面每 5 秒扫描新增或修改的 skill 输出文件，并自动更新文献卡片。";
+    if (watchedFileCount) {
+      els.watchText.textContent = `页面每 5 秒递归扫描子文件夹，已发现 ${watchedFileCount} 个总结文件，并优先按 JSON、Excel、Markdown 导入。`;
+    } else {
+      els.watchText.textContent = "已递归扫描子文件夹，暂未发现 summary.json、paper_summary.xlsx 或 *_paper_summary.md 这类总结文件。";
+    }
   } else if (status === "scanning") {
     els.watchTitle.textContent = "正在扫描输出目录";
-    els.watchText.textContent = "读取 Excel、JSON 和 Markdown 总结文件。";
+    els.watchText.textContent = "递归查找每篇论文文件夹中的 summary / *_paper_summary 输出文件。";
   } else if (status === "needs-permission") {
     els.watchTitle.textContent = `需要授权：${watchedDirectoryHandle?.name || "上次选择的文件夹"}`;
     els.watchText.textContent = "浏览器需要重新授权读取目录；点击“监听文件夹”重新选择即可。";
@@ -764,7 +832,7 @@ function updateWatchStatus(status, message = "") {
     els.watchText.textContent = message || "请重新选择输出目录。";
   } else {
     els.watchTitle.textContent = "未监听输出目录";
-    els.watchText.textContent = "点击“监听文件夹”，选择 skill 归档输出目录；页面会自动发现新增论文总结。";
+    els.watchText.textContent = "点击“监听文件夹”，可以选择 paper 总目录；页面会递归扫描每篇论文子文件夹里的总结文件。";
   }
   renderWatchStatusMeta();
 }
@@ -773,7 +841,11 @@ function renderWatchStatusMeta() {
   if (!els.watchMeta) return;
   els.watchMeta.replaceChildren();
   if (watchedDirectoryHandle) els.watchMeta.append(badge(watchedDirectoryHandle.name));
-  if (watchedFileCount) els.watchMeta.append(badge(`${watchedFileCount} 个输出文件`));
+  if (watchedFolderCount) els.watchMeta.append(badge(`${watchedFolderCount} 个子文件夹`));
+  if (watchedFileCount) els.watchMeta.append(badge(`${watchedFileCount} 个总结文件`));
+  if (watchedImportFileCount) els.watchMeta.append(badge(`${watchedImportFileCount} 个导入源`));
+  if (skippedScanIssueCount) els.watchMeta.append(badge(`跳过 ${skippedScanIssueCount} 个失效项`, "type-missing"));
+  if (importErrorCount) els.watchMeta.append(badge(`${importErrorCount} 个解析失败`, "type-missing"));
   if (lastScanAt) els.watchMeta.append(badge(`最近扫描 ${lastScanAt.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`));
 }
 

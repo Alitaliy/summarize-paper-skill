@@ -14,7 +14,7 @@ https://alitaliy.github.io/summarize-paper-skill/
 
 网页位于仓库的 `docs/` 目录，支持两种接入方式：
 
-- 动态监听：点击“监听文件夹”，选择 skill 的归档输出目录；页面会每 5 秒扫描新增或修改的 `.xlsx`、`.json`、`.md` 文件并自动刷新。
+- 动态监听：点击“监听文件夹”，选择 `paper` 总目录或 skill 的归档输出目录；页面会每 5 秒递归扫描子文件夹中的总结输出并自动刷新。
 - 手动导入：直接拖入或选择 `summarize-paper` 生成的 Excel、JSON、Markdown 文件。
 
 网页只围绕 skill 输出的数据字段进行管理：`维度`、`类型`、`总结`、`原文依据/推测依据`、`置信度`、`后期核查建议`。你可以按文献卡片浏览、搜索、筛选维度、筛选来源类型、查看详情、删除条目，并把当前文献库导出为 JSON 备份。卡片和详情页会把同一个维度下的多条总结合并为“大类 + 小点”展示。
@@ -22,7 +22,27 @@ https://alitaliy.github.io/summarize-paper-skill/
 
 ## 动态监听输出目录
 
-升级后的 skill 会在生成 Markdown、JSON 和 Excel 后，把三份文件归档到统一文献库目录。默认目录为：
+推荐把本地文件整理为“每篇论文一个文件夹”，网页监听最上层的 `paper` 目录即可：
+
+```text
+paper/
+|-- Ferrari 等 - 2020 - Evolution Surfaces for .../
+|   |-- Ferrari 等 - 2020 - Evolution Surfaces for ....pdf
+|   |-- paper_text_default.txt
+|   |-- evolution_surfaces_paper_summary.json
+|   |-- evolution_surfaces_paper_summary.md
+|   `-- evolution_surfaces_paper_summary.xlsx
+`-- Yang 等 - 2023 - Applications of .../
+    |-- Yang 等 - 2023 - Applications of ....pdf
+    |-- yang_paper_text_default.txt
+    |-- yang_paper_summary.json
+    |-- yang_paper_summary.md
+    `-- yang_paper_summary.xlsx
+```
+
+网页只读取 `summary.*`、`paper_summary.*`、`*_paper_summary.*` 这类总结输出文件；PDF、抽取文本、`manifest.json` 和其他素材会被忽略。同一论文文件夹里如果同时存在 JSON、Excel、Markdown，网页优先导入 JSON，其次 Excel，最后 Markdown。
+
+升级后的 skill 也可以在生成 Markdown、JSON 和 Excel 后，把三份文件归档到统一文献库目录。默认目录为：
 
 ```text
 ~/Documents/summarize-paper-library/inbox
@@ -46,7 +66,13 @@ Windows PowerShell 示例：
 $env:SUMMARIZE_PAPER_LIBRARY_DIR = "$env:USERPROFILE\Documents\summarize-paper-library\inbox"
 ```
 
-打开在线页面后，点击“监听文件夹”，选择这个 `inbox` 目录。之后每次 skill 生成新论文总结，只要页面保持打开，它就会自动发现并刷新卡片。
+你也可以把环境变量指向自己的 `paper` 总目录：
+
+```powershell
+$env:SUMMARIZE_PAPER_LIBRARY_DIR = "C:\Users\你的用户名\Desktop\project\summarize-paper-skill-web\paper"
+```
+
+打开在线页面后，点击“监听文件夹”，选择 `paper` 总目录或默认 `inbox` 目录。之后每次 skill 生成新论文总结，只要页面保持打开，它就会自动发现并刷新卡片。
 
 ## Skill 功能概览
 
@@ -73,6 +99,7 @@ summarize-paper-skill/
     |-- agents/
     |   `-- openai.yaml
     `-- scripts/
+        |-- archive_summary_outputs.py
         `-- write_paper_summary_excel.py
 ```
 
@@ -146,7 +173,15 @@ JSON 输入格式：
 
 ## 网页接入数据
 
-每次运行 skill 后，生成的 Excel、JSON 和 Markdown 会归档到文献库 inbox。网页监听该目录后会自动导入；也可以继续手动拖入文件。推荐保留 JSON，因为它和 Excel 使用同一批结构化行，导入最稳定。
+每次运行 skill 后，可以把生成的 Excel、JSON 和 Markdown 放进对应论文文件夹。网页监听 `paper` 总目录后会递归扫描全部论文文件夹并自动导入；也可以继续手动拖入文件。推荐保留 JSON，因为它和 Excel 使用同一批结构化行，导入最稳定。
+
+如果使用归档脚本，可以这样把输出放入稳定的论文文件夹：
+
+```bash
+python summarize-paper/scripts/archive_summary_outputs.py summary.json paper_summary.md paper_summary.xlsx --library-dir ./paper --folder-name "Ferrari 等 - 2020 - Evolution Surfaces for Spatiotemporal Visualization of Vortex Features"
+```
+
+默认情况下，同一篇论文会写入同一个文件夹；如果想保留每次运行的版本，可以额外加 `--timestamped`。
 
 如果只拿到 Excel，也可以直接导入。网页会读取 `论文总结` 工作表，并自动识别以下列名：
 

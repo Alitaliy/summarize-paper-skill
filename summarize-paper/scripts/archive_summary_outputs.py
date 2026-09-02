@@ -46,16 +46,19 @@ def slugify(value: str) -> str:
     return (text or "paper-summary")[:80]
 
 
-def archive_outputs(files: list[Path], output_dir: Path | None = None) -> Path:
+def archive_outputs(files: list[Path], output_dir: Path | None = None, folder_name: str = "", timestamped: bool = False) -> Path:
     existing = [path for path in files if path.exists()]
     if not existing:
         raise FileNotFoundError("No existing output files were provided.")
 
     json_file = next((path for path in existing if path.suffix.lower() == ".json"), None)
     title = read_title(json_file, existing[0].stem)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     target_root = output_dir or default_library_dir()
-    target_dir = target_root / f"{slugify(title)}-{timestamp}"
+    folder_stem = slugify(folder_name or title)
+    if timestamped:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        folder_stem = f"{folder_stem}-{timestamp}"
+    target_dir = target_root / folder_stem
     target_dir.mkdir(parents=True, exist_ok=True)
 
     copied = []
@@ -71,10 +74,11 @@ def archive_outputs(files: list[Path], output_dir: Path | None = None) -> Path:
             name = path.name
         destination = target_dir / name
         shutil.copy2(path, destination)
-        copied.append({"source": str(path), "archived_as": name})
+        copied.append({"source_name": path.name, "archived_as": name})
 
     manifest = {
         "paper_title": title,
+        "folder_name": folder_stem,
         "archived_at": datetime.now(timezone.utc).isoformat(),
         "files": copied,
     }
@@ -86,8 +90,10 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Archive summarize-paper outputs into the local library inbox.")
     parser.add_argument("files", nargs="+", type=Path, help="Generated summary files, such as summary.json, summary.md, and summary.xlsx.")
     parser.add_argument("--library-dir", type=Path, default=None, help="Override the archive directory. Defaults to SUMMARIZE_PAPER_LIBRARY_DIR or Documents/summarize-paper-library/inbox.")
+    parser.add_argument("--folder-name", default="", help="Optional paper folder name, for example 'Author - Year - Title'. Defaults to the paper title from JSON.")
+    parser.add_argument("--timestamped", action="store_true", help="Append a UTC timestamp to the paper folder name when versioned runs should be kept separately.")
     args = parser.parse_args(argv)
-    target = archive_outputs(args.files, args.library_dir)
+    target = archive_outputs(args.files, args.library_dir, args.folder_name, args.timestamped)
     print(f"Archived summarize-paper outputs to {target}")
     return 0
 
