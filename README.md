@@ -2,7 +2,7 @@
 
 `summarize-paper` 是一个用于学术论文总结的 Codex Skill。它会基于用户提供的一篇论文生成忠实、可追溯的中文总结，并在环境允许时同时输出 Markdown 文档和 Excel 工作簿。
 
-本仓库同时提供一个静态网页文献管理器，用来管理这个 skill 生成的总结数据。网页不需要后端，导入的文献数据保存在浏览器本地。
+本仓库同时提供一个在线文献管理页面，用来管理这个 skill 生成的总结数据。页面支持手动导入，也支持选择一个输出目录后自动轮询刷新；导入后的文献库保存在浏览器本地。
 
 ## 在线文献管理页
 
@@ -12,13 +12,41 @@ GitHub Pages 地址：
 https://alitaliy.github.io/summarize-paper-skill/
 ```
 
-网页位于仓库的 `docs/` 目录，支持直接导入：
+网页位于仓库的 `docs/` 目录，支持两种接入方式：
 
-- `summarize-paper` 生成的 `.xlsx` Excel 工作簿。
-- `summarize-paper` 生成或中间使用的 `.json` 结构化数据。
-- `summarize-paper` 生成的 `.md` Markdown 总结。
+- 动态监听：点击“监听文件夹”，选择 skill 的归档输出目录；页面会每 5 秒扫描新增或修改的 `.xlsx`、`.json`、`.md` 文件并自动刷新。
+- 手动导入：直接拖入或选择 `summarize-paper` 生成的 Excel、JSON、Markdown 文件。
 
-网页只围绕 skill 输出的数据字段进行管理：`维度`、`类型`、`总结`、`原文依据/推测依据`、`置信度`、`后期核查建议`。你可以按文献卡片浏览、搜索、筛选维度、筛选来源类型、查看详情、删除条目，并把当前文献库导出为 JSON 备份。
+网页只围绕 skill 输出的数据字段进行管理：`维度`、`类型`、`总结`、`原文依据/推测依据`、`置信度`、`后期核查建议`。你可以按文献卡片浏览、搜索、筛选维度、筛选来源类型、查看详情、删除条目，并把当前文献库导出为 JSON 备份。卡片和详情页会把同一个维度下的多条总结合并为“大类 + 小点”展示。
+
+
+## 动态监听输出目录
+
+升级后的 skill 会在生成 Markdown、JSON 和 Excel 后，把三份文件归档到统一文献库目录。默认目录为：
+
+```text
+~/Documents/summarize-paper-library/inbox
+```
+
+如果系统没有 `Documents` 目录，则使用：
+
+```text
+~/.summarize-paper-library/inbox
+```
+
+你也可以用环境变量指定目录：
+
+```bash
+export SUMMARIZE_PAPER_LIBRARY_DIR=/path/to/summarize-paper-library/inbox
+```
+
+Windows PowerShell 示例：
+
+```powershell
+$env:SUMMARIZE_PAPER_LIBRARY_DIR = "$env:USERPROFILE\Documents\summarize-paper-library\inbox"
+```
+
+打开在线页面后，点击“监听文件夹”，选择这个 `inbox` 目录。之后每次 skill 生成新论文总结，只要页面保持打开，它就会自动发现并刷新卡片。
 
 ## Skill 功能概览
 
@@ -27,7 +55,7 @@ https://alitaliy.github.io/summarize-paper-skill/
 - 每条总结必须标注来源类型：`原文明确`、`原文概括`、`合理推测` 或 `未提及`。
 - 每条事实性内容都要求提供简短证据锚点，例如页码、章节、表格、图号或段落位置。
 - 推测内容必须单独标注为 `合理推测`，并使用谨慎措辞。
-- Markdown 与 Excel 输出使用同一批结构化行，便于逐行核对。
+- Markdown 会按维度大类聚合为小点列表；JSON 与 Excel 保留 claim-level 行记录，便于网页分组展示和证据追踪。
 
 ## 仓库结构
 
@@ -118,7 +146,7 @@ JSON 输入格式：
 
 ## 网页接入数据
 
-每次运行 skill 后，将输出的 Excel、JSON 或 Markdown 文件拖入网页即可。推荐优先保留 JSON，因为它和 Excel 使用同一批结构化行，导入最稳定。
+每次运行 skill 后，生成的 Excel、JSON 和 Markdown 会归档到文献库 inbox。网页监听该目录后会自动导入；也可以继续手动拖入文件。推荐保留 JSON，因为它和 Excel 使用同一批结构化行，导入最稳定。
 
 如果只拿到 Excel，也可以直接导入。网页会读取 `论文总结` 工作表，并自动识别以下列名：
 
@@ -143,7 +171,7 @@ JSON 输入格式：
 
 ## 隐私说明
 
-网页是纯前端静态页面，不包含后端服务。导入的论文总结默认只存储在浏览器 `localStorage` 中，不会上传到服务器。公开部署后，仓库只包含 skill、网页代码和说明文档，不包含你的论文文件或生成的总结数据。
+网页是纯前端页面，不包含后端服务。目录监听使用浏览器 File System Access API，只会读取你主动选择的文件夹；导入的论文总结默认只存储在浏览器 `localStorage` 中，不会上传到服务器。公开部署后，仓库只包含 skill、网页代码和说明文档，不包含你的论文文件或生成的总结数据。
 
 ## 许可证
 

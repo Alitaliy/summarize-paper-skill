@@ -1,4 +1,9 @@
-const STORAGE_KEY = "summarize-paper-library-v1";
+const STORAGE_KEY = "summarize-paper-library-v2";
+const LEGACY_STORAGE_KEY = "summarize-paper-library-v1";
+const HANDLE_DB = "summarize-paper-library-handles";
+const HANDLE_STORE = "handles";
+const HANDLE_KEY = "watch-directory";
+const SCAN_INTERVAL_MS = 5000;
 const DIMENSIONS = ["研究目的", "主要贡献", "使用技术/方法", "实验与结果", "不足/局限", "未来前景/后续工作"];
 const TYPES = ["原文明确", "原文概括", "合理推测", "未提及"];
 const CONFIDENCES = ["高", "中", "低"];
@@ -10,28 +15,33 @@ const HEADER_MAP = new Map([
   ["置信度", "confidence"],
   ["后期核查建议", "review_suggestion"],
 ]);
+const SUPPORTED_FILE_RE = /\.(xlsx|xls|json|md|markdown)$/i;
+const IGNORED_IMPORT_RE = /(^|\/)(manifest|package-lock|package)\.json$/i;
 
 let library = [];
-let filters = {
-  query: "",
-  dimension: "all",
-  type: "all",
-  confidence: "all",
-};
+let filters = { query: "", dimension: "all", type: "all", confidence: "all" };
+let watchedDirectoryHandle = null;
+let scanTimer = null;
+let lastScanSignature = "";
+let scanning = false;
+let lastScanAt = null;
+let watchedFileCount = 0;
 
 const els = {};
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   bindElements();
   hydrateFilters();
   loadLibrary();
   bindEvents();
   render();
+  await restoreWatchedDirectory();
 });
 
 function bindElements() {
   Object.assign(els, {
     fileInput: document.querySelector("#fileInput"),
+    watchButton: document.querySelector("#watchButton"),
     pasteButton: document.querySelector("#pasteButton"),
     exportButton: document.querySelector("#exportButton"),
     searchInput: document.querySelector("#searchInput"),
@@ -48,6 +58,10 @@ function bindElements() {
     sourceBackedCount: document.querySelector("#sourceBackedCount"),
     inferredCount: document.querySelector("#inferredCount"),
     resultSummary: document.querySelector("#resultSummary"),
+    watchPanel: document.querySelector("#watchPanel"),
+    watchTitle: document.querySelector("#watchTitle"),
+    watchText: document.querySelector("#watchText"),
+    watchMeta: document.querySelector("#watchMeta"),
     detailPanel: document.querySelector("#detailPanel"),
     detailSource: document.querySelector("#detailSource"),
     detailTitle: document.querySelector("#detailTitle"),
@@ -77,8 +91,10 @@ function fillSelect(select, values) {
 }
 
 function bindEvents() {
+  els.watchButton.addEventListener("click", chooseWatchDirectory);
+
   els.fileInput.addEventListener("change", async (event) => {
-    await importFiles([...event.target.files]);
+    await importFiles([...event.target.files], "文件导入");
     els.fileInput.value = "";
   });
 
@@ -87,14 +103,12 @@ function bindEvents() {
     els.dropZone.classList.add("is-dragover");
   });
 
-  els.dropZone.addEventListener("dragleave", () => {
-    els.dropZone.classList.remove("is-dragover");
-  });
+  els.dropZone.addEventListener("dragleave", () => els.dropZone.classList.remove("is-dragover"));
 
   els.dropZone.addEventListener("drop", async (event) => {
     event.preventDefault();
     els.dropZone.classList.remove("is-dragover");
-    await importFiles([...event.dataTransfer.files]);
+    await importFiles([...event.dataTransfer.files], "拖拽导入");
   });
 
   els.searchInput.addEventListener("input", () => {
@@ -129,7 +143,7 @@ function bindEvents() {
   els.exportButton.addEventListener("click", exportLibrary);
 
   els.clearLibraryButton.addEventListener("click", () => {
-    if (!library.length || !confirm("清空当前浏览器中的全部文献总结？")) return;
+    if (!library.length || !confirm("清空当前浏览器中的全部文献总结？监听目录中的原始文件不会被删除。")) return;
     library = [];
     saveLibrary();
     render();
@@ -144,8 +158,8 @@ function bindEvents() {
   els.pasteImportButton.addEventListener("click", async (event) => {
     event.preventDefault();
     try {
-      const papers = normalizeJsonPayload(JSON.parse(els.pasteText.value));
-      mergePapers(papers, "粘贴 JSON");
+      const papers = normalizeJsonPayload(JSON.parse(els.pasteText.value), "粘贴 JSON");
+      mergePapers(papers, "粘贴 JSON", { forceToast: true });
       els.pasteDialog.close();
     } catch (error) {
       toast(`JSON 导入失败：${error.message}`);
@@ -156,7 +170,6 @@ function bindEvents() {
   els.detailPanel.addEventListener("click", (event) => {
     if (event.target === els.detailPanel) closeDetail();
   });
-
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeDetail();
   });
@@ -164,7 +177,7 @@ function bindEvents() {
 
 function loadLibrary() {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY) || "[]");
     library = Array.isArray(saved) ? saved.map(normalizePaper).filter(Boolean) : [];
   } catch {
     library = [];
@@ -175,35 +188,166 @@ function saveLibrary() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(library, null, 2));
 }
 
-async function importFiles(files) {
+async function chooseWatchDirectory() {
+  if (!window.showDirectoryPicker) {
+    toast("当前浏览器不支持目录监听，请使用新版 Chrome 或 Edge");
+    return;
+  }
+
+  try {
+    watchedDirectoryHandle = await window.showDirectoryPicker({ mode: "read" });
+    await saveDirectoryHandle(watchedDirectoryHandle);
+    await startWatchingDirectory(true);
+  } catch (error) {
+    if (error.name !== "AbortError") toast(`监听文件夹失败：${error.message}`);
+  }
+}
+
+async function restoreWatchedDirectory() {
+  if (!window.showDirectoryPicker || !window.indexedDB) {
+    updateWatchStatus("manual");
+    return;
+  }
+
+  try {
+    const handle = await readDirectoryHandle();
+    if (!handle) {
+      updateWatchStatus("manual");
+      return;
+    }
+    const allowed = await ensureReadPermission(handle, false);
+    if (!allowed) {
+      watchedDirectoryHandle = handle;
+      updateWatchStatus("needs-permission");
+      return;
+    }
+    watchedDirectoryHandle = handle;
+    await startWatchingDirectory(false);
+  } catch {
+    updateWatchStatus("manual");
+  }
+}
+
+async function startWatchingDirectory(showToast) {
+  if (!watchedDirectoryHandle) return;
+  const allowed = await ensureReadPermission(watchedDirectoryHandle, true);
+  if (!allowed) {
+    updateWatchStatus("needs-permission");
+    toast("没有读取权限，无法监听这个文件夹");
+    return;
+  }
+
+  clearInterval(scanTimer);
+  updateWatchStatus("scanning");
+  await scanWatchedDirectory({ showToast });
+  scanTimer = setInterval(() => scanWatchedDirectory({ showToast: false }), SCAN_INTERVAL_MS);
+  updateWatchStatus("watching");
+}
+
+async function scanWatchedDirectory({ showToast }) {
+  if (!watchedDirectoryHandle || scanning) return;
+  scanning = true;
+  try {
+    const files = [];
+    for await (const item of walkDirectory(watchedDirectoryHandle)) {
+      if (SUPPORTED_FILE_RE.test(item.path) && !IGNORED_IMPORT_RE.test(item.path)) files.push(item);
+    }
+    files.sort((a, b) => a.path.localeCompare(b.path, "zh-CN"));
+    const signature = files.map((item) => `${item.path}:${item.file.size}:${item.file.lastModified}`).join("|");
+    watchedFileCount = files.length;
+
+    if (signature && signature !== lastScanSignature) {
+      const papers = [];
+      const errors = [];
+      for (const item of files) {
+        try {
+          const parsed = await parseFile(item.file, item.path);
+          papers.push(...parsed);
+        } catch (error) {
+          errors.push(`${item.path}: ${error.message}`);
+        }
+      }
+      mergePapers(papers, "自动扫描", { forceToast: showToast, quietWhenNoChange: !showToast });
+      if (errors.length && showToast) toast(`部分文件未导入：${errors.slice(0, 3).join("；")}`);
+      lastScanSignature = signature;
+    }
+
+    lastScanAt = new Date();
+    updateWatchStatus("watching");
+  } catch (error) {
+    updateWatchStatus("error", error.message);
+  } finally {
+    scanning = false;
+  }
+}
+
+async function* walkDirectory(directoryHandle, prefix = "") {
+  for await (const [name, handle] of directoryHandle.entries()) {
+    const path = prefix ? `${prefix}/${name}` : name;
+    if (handle.kind === "file") {
+      yield { path, file: await handle.getFile() };
+    } else if (handle.kind === "directory") {
+      yield* walkDirectory(handle, path);
+    }
+  }
+}
+
+async function ensureReadPermission(handle, requestIfNeeded) {
+  const options = { mode: "read" };
+  if ((await handle.queryPermission(options)) === "granted") return true;
+  if (requestIfNeeded && (await handle.requestPermission(options)) === "granted") return true;
+  return false;
+}
+
+function saveDirectoryHandle(handle) {
+  if (!window.indexedDB) return Promise.resolve();
+  return withHandleStore("readwrite", (store) => store.put(handle, HANDLE_KEY));
+}
+
+function readDirectoryHandle() {
+  if (!window.indexedDB) return Promise.resolve(null);
+  return withHandleStore("readonly", (store) => store.get(HANDLE_KEY));
+}
+
+function withHandleStore(mode, action) {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open(HANDLE_DB, 1);
+    open.onupgradeneeded = () => open.result.createObjectStore(HANDLE_STORE);
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const db = open.result;
+      const tx = db.transaction(HANDLE_STORE, mode);
+      const request = action(tx.objectStore(HANDLE_STORE));
+      request.onsuccess = () => resolve(request.result ?? null);
+      request.onerror = () => reject(request.error);
+      tx.oncomplete = () => db.close();
+    };
+  });
+}
+
+async function importFiles(files, sourceLabel) {
   if (!files.length) return;
   const imported = [];
   const errors = [];
 
   for (const file of files) {
     try {
-      const papers = await parseFile(file);
+      const papers = await parseFile(file, file.name);
       imported.push(...papers);
     } catch (error) {
       errors.push(`${file.name}: ${error.message}`);
     }
   }
 
-  if (imported.length) mergePapers(imported, "文件导入");
+  if (imported.length) mergePapers(imported, sourceLabel, { forceToast: true });
   if (errors.length) toast(`部分文件导入失败：${errors.join("；")}`);
 }
 
-async function parseFile(file) {
-  const name = file.name.toLowerCase();
-  if (name.endsWith(".json")) {
-    return normalizeJsonPayload(JSON.parse(await file.text()), file.name);
-  }
-  if (name.endsWith(".md") || name.endsWith(".markdown")) {
-    return [parseMarkdown(await file.text(), file.name)];
-  }
-  if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
-    return [await parseWorkbook(file)];
-  }
+async function parseFile(file, sourcePath = file.name) {
+  const name = sourcePath.toLowerCase();
+  if (name.endsWith(".json")) return normalizeJsonPayload(JSON.parse(await file.text()), sourcePath);
+  if (name.endsWith(".md") || name.endsWith(".markdown")) return [parseMarkdown(await file.text(), sourcePath)];
+  if (name.endsWith(".xlsx") || name.endsWith(".xls")) return [await parseWorkbook(file, sourcePath)];
   throw new Error("仅支持 .xlsx、.xls、.json、.md");
 }
 
@@ -215,20 +359,13 @@ function normalizeJsonPayload(payload, sourceFile = "summary.json") {
     return payload.papers.map((item, index) => normalizePaper({ ...item, sourceFile: item.sourceFile || sourceFile, fallbackIndex: index }));
   }
   if (payload && Array.isArray(payload.rows)) {
-    return [normalizePaper({
-      title: payload.paper_title || payload.title,
-      rows: payload.rows,
-      sourceFile,
-    })];
+    return [normalizePaper({ title: payload.paper_title || payload.title, rows: payload.rows, sourceFile })];
   }
   throw new Error("JSON 需要包含 rows 数组或 papers 数组");
 }
 
-async function parseWorkbook(file) {
-  if (!window.XLSX) {
-    throw new Error("Excel 解析库未加载，请刷新页面或检查网络");
-  }
-
+async function parseWorkbook(file, sourcePath) {
+  if (!window.XLSX) throw new Error("Excel 解析库未加载，请刷新页面或检查网络");
   const buffer = await file.arrayBuffer();
   const workbook = window.XLSX.read(buffer, { type: "array" });
   const sheetName = workbook.SheetNames.find((name) => name.includes("论文总结")) || workbook.SheetNames[0];
@@ -236,15 +373,14 @@ async function parseWorkbook(file) {
 
   const matrix = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: "" });
   const titleCell = String(matrix[0]?.[0] || "").trim();
-  const title = titleCell.replace(/^论文总结[:：]\s*/, "") || file.name.replace(/\.(xlsx|xls)$/i, "");
+  const title = titleCell.replace(/^论文总结[:：]\s*/, "") || sourcePath.replace(/\.(xlsx|xls)$/i, "");
   const headerIndex = matrix.findIndex((row) => row.some((cell) => String(cell).trim() === "维度"));
   if (headerIndex < 0) throw new Error("未找到包含“维度”的表头行");
 
   const headers = matrix[headerIndex].map((cell) => String(cell).trim());
   const rows = matrix.slice(headerIndex + 1).map((line) => rowFromHeaders(headers, line)).filter((row) => row.summary || row.dimension);
   if (!rows.length) throw new Error("没有读到总结行");
-
-  return normalizePaper({ title, rows, sourceFile: file.name });
+  return normalizePaper({ title, rows, sourceFile: sourcePath });
 }
 
 function rowFromHeaders(headers, values) {
@@ -258,27 +394,50 @@ function rowFromHeaders(headers, values) {
 
 function parseMarkdown(text, sourceFile = "summary.md") {
   const title = (text.match(/^#\s*论文总结[:：]\s*(.+)$/m)?.[1] || sourceFile.replace(/\.(md|markdown)$/i, "")).trim();
-  const table = extractMarkdownTable(text);
-  const rows = table.map((cells) => normalizeRow({
-    dimension: cells[0],
-    basis_type: cells[1],
-    summary: cells[2],
-    evidence: cells[3],
-    confidence: "",
-    review_suggestion: "",
-  })).filter((row) => row.summary || row.dimension);
-  if (!rows.length) throw new Error("Markdown 中没有读到逐项总结表格");
-  return normalizePaper({ title, rows, sourceFile });
+  const rows = parseGroupedMarkdown(text).concat(parseMarkdownTable(text));
+  const normalized = rows.map(normalizeRow).filter((row) => row.summary || row.dimension);
+  if (!normalized.length) throw new Error("Markdown 中没有读到逐项总结内容");
+  return normalizePaper({ title, rows: normalized, sourceFile });
 }
 
-function extractMarkdownTable(text) {
+function parseGroupedMarkdown(text) {
+  const start = text.indexOf("## 逐项总结");
+  if (start < 0) return [];
+  const endCandidates = ["## 推测内容清单", "## 需注意的原文限制"].map((heading) => text.indexOf(heading, start + 1)).filter((index) => index > start);
+  const end = endCandidates.length ? Math.min(...endCandidates) : text.length;
+  const block = text.slice(start, end);
+  const rows = [];
+  let dimension = "";
+  for (const line of block.split(/\r?\n/)) {
+    const heading = line.match(/^###\s+(.+)/);
+    if (heading) {
+      dimension = heading[1].trim();
+      continue;
+    }
+    const item = line.match(/^[-*]\s+(?:【([^】]+)】\s*)?(.+)/);
+    if (!item || !dimension) continue;
+    const tags = (item[1] || "").split(/[|｜]/).map((value) => value.trim()).filter(Boolean);
+    rows.push({
+      dimension,
+      basis_type: tags.find((tag) => TYPES.includes(tag)) || "原文概括",
+      confidence: tags.find((tag) => CONFIDENCES.includes(tag)) || "",
+      summary: item[2].replace(/（依据[:：].*?）$/, "").trim(),
+      evidence: item[2].match(/（依据[:：](.*?)）$/)?.[1]?.trim() || "",
+      review_suggestion: "",
+    });
+  }
+  return rows;
+}
+
+function parseMarkdownTable(text) {
   const start = text.indexOf("## 逐项总结");
   const end = text.indexOf("## 推测内容清单", start);
   const block = text.slice(start >= 0 ? start : 0, end >= 0 ? end : text.length);
   return block.split(/\r?\n/)
     .filter((line) => line.trim().startsWith("|") && !/^\|\s*-+/.test(line) && !/^\|\s*维度\s*\|/.test(line))
     .map(splitMarkdownRow)
-    .filter((cells) => cells.length >= 4);
+    .filter((cells) => cells.length >= 4)
+    .map((cells) => ({ dimension: cells[0], basis_type: cells[1], summary: cells[2], evidence: cells[3], confidence: "", review_suggestion: "" }));
 }
 
 function splitMarkdownRow(line) {
@@ -306,11 +465,11 @@ function splitMarkdownRow(line) {
 function normalizePaper(input) {
   const rows = (input.rows || []).map(normalizeRow).filter((row) => row.dimension || row.summary);
   if (!rows.length) return null;
-  const title = cleanCell(input.paper_title || input.title || input.name || `未命名论文 ${input.fallbackIndex || ""}`).trim() || "未命名论文";
+  const title = cleanCell(input.paper_title || input.title || input.name || `未命名论文 ${input.fallbackIndex || ""}`) || "未命名论文";
   const sourceFile = cleanCell(input.sourceFile || input.source_file || "手动导入");
   const fingerprint = hashString(`${title}\n${JSON.stringify(rows)}`);
   return {
-    id: input.id || fingerprint,
+    id: input.id || `paper-${hashString(title)}`,
     fingerprint,
     title,
     sourceFile,
@@ -335,7 +494,7 @@ function cleanCell(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
-function mergePapers(papers, sourceLabel) {
+function mergePapers(papers, sourceLabel, options = {}) {
   let added = 0;
   let updated = 0;
   let skipped = 0;
@@ -347,12 +506,14 @@ function mergePapers(papers, sourceLabel) {
       continue;
     }
 
-    const sameTitleIndex = library.findIndex((item) => item.title === paper.title);
+    const sameTitleIndex = library.findIndex((item) => normalizeKey(item.title) === normalizeKey(paper.title));
     if (sameTitleIndex >= 0) {
+      const existing = library[sameTitleIndex];
       library[sameTitleIndex] = {
         ...paper,
-        id: library[sameTitleIndex].id,
-        importedAt: library[sameTitleIndex].importedAt,
+        id: existing.id,
+        importedAt: existing.importedAt,
+        sourceFile: mergeSourceNames(existing.sourceFile, paper.sourceFile),
       };
       updated += 1;
     } else {
@@ -361,19 +522,31 @@ function mergePapers(papers, sourceLabel) {
     }
   }
 
+  library.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
   saveLibrary();
   render();
-  toast(`${sourceLabel}完成：新增 ${added} 篇，更新 ${updated} 篇，跳过重复 ${skipped} 篇`);
+
+  if (options.forceToast || (!options.quietWhenNoChange && (added || updated))) {
+    toast(`${sourceLabel}完成：新增 ${added} 篇，更新 ${updated} 篇，跳过重复 ${skipped} 篇`);
+  }
+}
+
+function mergeSourceNames(a, b) {
+  const names = new Set(String(a || "").split("；").concat(String(b || "").split("；")).map((item) => item.trim()).filter(Boolean));
+  return [...names].slice(0, 6).join("；");
+}
+
+function normalizeKey(value) {
+  return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
 function render() {
   const visible = getVisiblePapers();
   renderStats();
+  renderWatchStatusMeta();
   renderCards(visible);
   els.emptyState.style.display = library.length ? "none" : "block";
-  els.resultSummary.textContent = library.length
-    ? `显示 ${visible.length} / ${library.length} 篇文献`
-    : "暂无文献";
+  els.resultSummary.textContent = library.length ? `显示 ${visible.length} / ${library.length} 篇文献` : "暂无文献";
 }
 
 function renderStats() {
@@ -415,11 +588,7 @@ function renderCards(papers) {
     title.textContent = paper.title;
     const meta = document.createElement("div");
     meta.className = "paper-meta";
-    meta.append(
-      badge(`${paper.rows.length} 行总结`),
-      badge(formatDate(paper.importedAt)),
-      ...typeBadges(paper.rows),
-    );
+    meta.append(badge(`${paper.rows.length} 行总结`), badge(formatDate(paper.importedAt)), ...typeBadges(paper.rows));
     titleWrap.append(title, meta);
 
     const actions = document.createElement("div");
@@ -427,24 +596,15 @@ function renderCards(papers) {
     const detailButton = button("查看", "tiny-button");
     detailButton.addEventListener("click", () => openDetail(paper.id));
     const deleteButton = button("删", "tiny-button");
-    deleteButton.title = "删除这篇文献";
+    deleteButton.title = "从浏览器本地库删除这篇文献";
     deleteButton.addEventListener("click", () => deletePaper(paper.id));
     actions.append(detailButton, deleteButton);
     header.append(titleWrap, actions);
 
     const dimensionList = document.createElement("div");
     dimensionList.className = "dimension-list";
-    for (const dimension of DIMENSIONS) {
-      const rows = paper.visibleRows.filter((row) => row.dimension === dimension);
-      if (!rows.length) continue;
-      const item = document.createElement("div");
-      item.className = "dimension-item";
-      const label = document.createElement("strong");
-      label.textContent = `${dimension} · ${rows.length}`;
-      const summary = document.createElement("p");
-      summary.textContent = rows.map((row) => row.summary).join(" ");
-      item.append(label, summary);
-      dimensionList.append(item);
+    for (const [dimension, rows] of groupRowsByDimension(paper.visibleRows)) {
+      dimensionList.append(renderDimensionSummary(dimension, rows));
     }
 
     const footer = document.createElement("div");
@@ -461,6 +621,28 @@ function renderCards(papers) {
   }
 }
 
+function renderDimensionSummary(dimension, rows) {
+  const item = document.createElement("section");
+  item.className = "dimension-item";
+  const label = document.createElement("strong");
+  label.textContent = `${dimension} · ${rows.length} 点`;
+  const list = document.createElement("ul");
+  list.className = "summary-points";
+  for (const row of rows.slice(0, 4)) {
+    const li = document.createElement("li");
+    li.textContent = row.summary || "无总结内容";
+    list.append(li);
+  }
+  if (rows.length > 4) {
+    const li = document.createElement("li");
+    li.textContent = `另有 ${rows.length - 4} 点，打开详情查看`;
+    li.className = "more-point";
+    list.append(li);
+  }
+  item.append(label, list);
+  return item;
+}
+
 function openDetail(id) {
   const paper = library.find((item) => item.id === id);
   if (!paper) return;
@@ -468,33 +650,45 @@ function openDetail(id) {
 
   els.detailSource.textContent = paper.sourceFile;
   els.detailTitle.textContent = paper.title;
-  els.detailMeta.replaceChildren(
-    badge(`${paper.rows.length} 行总结`),
-    badge(`导入 ${formatDate(paper.importedAt)}`),
-    ...typeBadges(paper.rows),
-  );
+  els.detailMeta.replaceChildren(badge(`${paper.rows.length} 行总结`), badge(`导入 ${formatDate(paper.importedAt)}`), ...typeBadges(paper.rows));
   els.detailRows.replaceChildren();
 
-  for (const dimension of DIMENSIONS) {
-    const groupRows = rows.filter((row) => row.dimension === dimension);
-    for (const row of groupRows) {
-      els.detailRows.append(renderDetailRow(row));
-    }
+  for (const [dimension, groupRows] of groupRowsByDimension(rows)) {
+    els.detailRows.append(renderDetailSection(dimension, groupRows));
   }
 
   els.detailPanel.classList.add("is-open");
   els.detailPanel.setAttribute("aria-hidden", "false");
 }
 
-function renderDetailRow(row) {
+function renderDetailSection(dimension, rows) {
+  const section = document.createElement("section");
+  section.className = "detail-section";
+  const heading = document.createElement("div");
+  heading.className = "detail-section-head";
+  const title = document.createElement("h3");
+  title.textContent = dimension || "未标注维度";
+  heading.append(title, badge(`${rows.length} 点`));
+  section.append(heading);
+
+  const list = document.createElement("div");
+  list.className = "detail-point-list";
+  for (const row of rows) list.append(renderDetailPoint(row));
+  section.append(list);
+  return section;
+}
+
+function renderDetailPoint(row) {
   const wrapper = document.createElement("article");
   wrapper.className = "detail-row";
 
   const head = document.createElement("div");
   head.className = "detail-row-head";
-  const dimension = document.createElement("h3");
-  dimension.textContent = row.dimension || "未标注维度";
-  head.append(dimension, badge(row.basis_type || "未标注", typeClass(row.basis_type)));
+  const tags = document.createElement("div");
+  tags.className = "paper-meta";
+  tags.append(badge(row.basis_type || "未标注", typeClass(row.basis_type)));
+  if (row.confidence) tags.append(badge(`置信度 ${row.confidence}`));
+  head.append(tags);
 
   const summary = document.createElement("p");
   summary.textContent = row.summary || "无总结内容";
@@ -507,14 +701,25 @@ function renderDetailRow(row) {
     wrapper.append(evidence);
   }
 
-  if (row.confidence || row.review_suggestion) {
+  if (row.review_suggestion) {
     const review = document.createElement("div");
     review.className = "review";
-    review.textContent = `置信度：${row.confidence || "未标注"}${row.review_suggestion ? `；核查建议：${row.review_suggestion}` : ""}`;
+    review.textContent = `核查建议：${row.review_suggestion}`;
     wrapper.append(review);
   }
 
   return wrapper;
+}
+
+function groupRowsByDimension(rows) {
+  const known = new Map(DIMENSIONS.map((dimension) => [dimension, []]));
+  const other = new Map();
+  for (const row of rows) {
+    const target = known.has(row.dimension) ? known : other;
+    if (!target.has(row.dimension)) target.set(row.dimension || "未标注维度", []);
+    target.get(row.dimension || "未标注维度").push(row);
+  }
+  return [...known.entries(), ...other.entries()].filter(([, groupRows]) => groupRows.length);
 }
 
 function closeDetail() {
@@ -524,12 +729,12 @@ function closeDetail() {
 
 function deletePaper(id) {
   const paper = library.find((item) => item.id === id);
-  if (!paper || !confirm(`删除“${paper.title}”？`)) return;
+  if (!paper || !confirm(`删除“${paper.title}”？监听目录里的原始文件不会被删除。`)) return;
   library = library.filter((item) => item.id !== id);
   saveLibrary();
   closeDetail();
   render();
-  toast("已删除这篇文献");
+  toast("已从本地文献库删除");
 }
 
 function exportLibrary() {
@@ -541,6 +746,35 @@ function exportLibrary() {
   link.download = `summarize-paper-library-${new Date().toISOString().slice(0, 10)}.json`;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+function updateWatchStatus(status, message = "") {
+  els.watchPanel.dataset.status = status;
+  if (status === "watching") {
+    els.watchTitle.textContent = `正在监听：${watchedDirectoryHandle?.name || "已选择文件夹"}`;
+    els.watchText.textContent = "页面每 5 秒扫描新增或修改的 skill 输出文件，并自动更新文献卡片。";
+  } else if (status === "scanning") {
+    els.watchTitle.textContent = "正在扫描输出目录";
+    els.watchText.textContent = "读取 Excel、JSON 和 Markdown 总结文件。";
+  } else if (status === "needs-permission") {
+    els.watchTitle.textContent = `需要授权：${watchedDirectoryHandle?.name || "上次选择的文件夹"}`;
+    els.watchText.textContent = "浏览器需要重新授权读取目录；点击“监听文件夹”重新选择即可。";
+  } else if (status === "error") {
+    els.watchTitle.textContent = "监听出错";
+    els.watchText.textContent = message || "请重新选择输出目录。";
+  } else {
+    els.watchTitle.textContent = "未监听输出目录";
+    els.watchText.textContent = "点击“监听文件夹”，选择 skill 归档输出目录；页面会自动发现新增论文总结。";
+  }
+  renderWatchStatusMeta();
+}
+
+function renderWatchStatusMeta() {
+  if (!els.watchMeta) return;
+  els.watchMeta.replaceChildren();
+  if (watchedDirectoryHandle) els.watchMeta.append(badge(watchedDirectoryHandle.name));
+  if (watchedFileCount) els.watchMeta.append(badge(`${watchedFileCount} 个输出文件`));
+  if (lastScanAt) els.watchMeta.append(badge(`最近扫描 ${lastScanAt.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`));
 }
 
 function typeBadges(rows) {
@@ -598,5 +832,5 @@ function hashString(value) {
     hash ^= value.charCodeAt(i);
     hash = Math.imul(hash, 16777619);
   }
-  return `paper-${(hash >>> 0).toString(16)}`;
+  return (hash >>> 0).toString(16);
 }

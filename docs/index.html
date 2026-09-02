@@ -15,7 +15,8 @@
         <h1>论文总结管理器</h1>
       </div>
       <div class="header-actions">
-        <label class="button primary">
+        <button id="watchButton" class="button primary">监听文件夹</button>
+        <label class="button">
           <input id="fileInput" type="file" accept=".xlsx,.xls,.json,.md,.markdown" multiple />
           导入文件
         </label>
@@ -49,6 +50,14 @@
           </select>
         </div>
         <button id="clearFiltersButton" class="button compact">重置</button>
+      </section>
+
+      <section id="watchPanel" class="watch-panel">
+        <div>
+          <strong id="watchTitle">未监听输出目录</strong>
+          <span id="watchText">点击“监听文件夹”，选择 skill 归档输出目录；页面会自动发现新增论文总结。</span>
+        </div>
+        <div id="watchMeta" class="paper-meta"></div>
       </section>
 
       <section class="stats-grid" aria-label="统计概览">

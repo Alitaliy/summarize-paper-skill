@@ -16,3 +16,7 @@ paper_summary.xlsx
 *_paper_summary.md
 *_paper_summary.xlsx
 paper_extracted_text.txt
+# Local summarize-paper dynamic library outputs
+summarize-paper-library/
+.summarize-paper-library/
+Documents/summarize-paper-library/
