@@ -20,3 +20,7 @@ paper_extracted_text.txt
 summarize-paper-library/
 .summarize-paper-library/
 Documents/summarize-paper-library/
+paper/
+*.pdf
+.tmp-chrome-*/
+overflow-*.png
