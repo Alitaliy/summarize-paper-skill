@@ -73,6 +73,7 @@ function bindElements() {
     detailSource: document.querySelector("#detailSource"),
     detailTitle: document.querySelector("#detailTitle"),
     detailMeta: document.querySelector("#detailMeta"),
+    detailOverview: document.querySelector("#detailOverview"),
     detailRows: document.querySelector("#detailRows"),
     closeDetailButton: document.querySelector("#closeDetailButton"),
     pasteDialog: document.querySelector("#pasteDialog"),
@@ -272,10 +273,12 @@ async function scanWatchedDirectory({ showToast }) {
     if (signature && (signature !== lastScanSignature || showToast)) {
       const papers = [];
       const errors = [];
+      const companionMetadata = await readCompanionMarkdownMetadata(files);
       for (const item of importFiles) {
         try {
           const parsed = await parseFile(item.file, item.path);
-          papers.push(...parsed);
+          const metadata = companionMetadata.get(summaryGroupKey(item.path));
+          papers.push(...parsed.map((paper) => mergePaperMetadata(paper, metadata)));
         } catch (error) {
           errors.push(`${item.path}: ${error.message}`);
         }
@@ -356,6 +359,24 @@ function summaryFilePriority(path) {
   return WATCH_FILE_PRIORITY[suffix] || 99;
 }
 
+async function readCompanionMarkdownMetadata(files) {
+  const metadata = new Map();
+  for (const item of files) {
+    if (!isMarkdownPath(item.path)) continue;
+    try {
+      const info = parseMarkdownMetadata(await item.file.text(), item.path);
+      if (hasPaperMetadata(info)) metadata.set(summaryGroupKey(item.path), info);
+    } catch {
+      // Metadata is optional; a bad Markdown companion should not block JSON/Excel import.
+    }
+  }
+  return metadata;
+}
+
+function isMarkdownPath(path) {
+  return /\.(md|markdown)$/i.test(path);
+}
+
 async function ensureReadPermission(handle, requestIfNeeded) {
   const options = { mode: "read" };
   if ((await handle.queryPermission(options)) === "granted") return true;
@@ -423,7 +444,7 @@ function normalizeJsonPayload(payload, sourceFile = "summary.json") {
     return payload.papers.map((item, index) => normalizePaper({ ...item, sourceFile: item.sourceFile || sourceFile, fallbackIndex: index }));
   }
   if (payload && Array.isArray(payload.rows)) {
-    return [normalizePaper({ title: payload.paper_title || payload.title, rows: payload.rows, sourceFile })];
+    return [normalizePaper({ ...payload, title: payload.paper_title || payload.title, rows: payload.rows, sourceFile })];
   }
   throw new Error("JSON 需要包含 rows 数组或 papers 数组");
 }
@@ -457,11 +478,64 @@ function rowFromHeaders(headers, values) {
 }
 
 function parseMarkdown(text, sourceFile = "summary.md") {
-  const title = (text.match(/^#\s*论文总结[:：]\s*(.+)$/m)?.[1] || sourceFile.replace(/\.(md|markdown)$/i, "")).trim();
+  const metadata = parseMarkdownMetadata(text, sourceFile);
+  const title = metadata.title || (text.match(/^#\s*论文总结[:：]\s*(.+)$/m)?.[1] || sourceFile.replace(/\.(md|markdown)$/i, "")).trim();
   const rows = parseGroupedMarkdown(text).concat(parseMarkdownTable(text));
   const normalized = rows.map(normalizeRow).filter((row) => row.summary || row.dimension);
   if (!normalized.length) throw new Error("Markdown 中没有读到逐项总结内容");
-  return normalizePaper({ title, rows: normalized, sourceFile });
+  return normalizePaper({ ...metadata, title, rows: normalized, sourceFile });
+}
+
+function parseMarkdownMetadata(text, sourceFile = "summary.md") {
+  const title = (text.match(/^#\s*论文总结[:：]\s*(.+)$/m)?.[1] || sourceFile.replace(/\.(md|markdown)$/i, "")).trim();
+  const basicInfo = parseBasicInfoBlock(text);
+  const overview = cleanMarkdownText(extractSection(text, "总览"));
+  const venue = basicInfo["年份/会议或期刊"] || basicInfo["会议或期刊"] || basicInfo["期刊"] || basicInfo["年份"];
+  return {
+    title,
+    authors: basicInfo["作者"],
+    venue,
+    year: extractYear(venue || basicInfo["年份"]),
+    field: basicInfo["研究领域"],
+    integrity: basicInfo["资料完整性说明"],
+    overview,
+  };
+}
+
+function parseBasicInfoBlock(text) {
+  const block = extractSection(text, "基本信息");
+  const info = {};
+  for (const line of block.split(/\r?\n/)) {
+    const match = line.match(/^[-*]\s*([^：:]+)[：:]\s*(.+)$/);
+    if (match) info[match[1].trim()] = cleanMarkdownText(match[2]);
+  }
+  return info;
+}
+
+function extractSection(text, heading) {
+  const pattern = new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`, "m");
+  const match = text.match(pattern);
+  if (!match) return "";
+  const start = (match.index || 0) + match[0].length;
+  const rest = text.slice(start);
+  const next = rest.search(/^##\s+/m);
+  return (next >= 0 ? rest.slice(0, next) : rest).trim();
+}
+
+function cleanMarkdownText(value) {
+  return cleanCell(String(value || "")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^[-*]\s+/gm, ""));
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractYear(value) {
+  return String(value || "").match(/(?:19|20)\d{2}/)?.[0] || "";
 }
 
 function parseGroupedMarkdown(text) {
@@ -532,14 +606,47 @@ function normalizePaper(input) {
   const title = cleanCell(input.paper_title || input.title || input.name || `未命名论文 ${input.fallbackIndex || ""}`) || "未命名论文";
   const sourceFile = cleanCell(input.sourceFile || input.source_file || "手动导入");
   const fingerprint = hashString(`${title}\n${JSON.stringify(rows)}`);
+  const venue = cleanCell(input.venue || input.journal || input.publication || input["年份/会议或期刊"]);
+  const year = cleanCell(input.year || extractYear(venue));
+  const overview = cleanCell(input.overview || input.abstract || input.brief || buildPaperBrief(rows));
   return {
     id: input.id || `paper-${hashString(title)}`,
     fingerprint,
     title,
+    authors: cleanCell(input.authors || input.author || input["作者"]),
+    venue,
+    year,
+    field: cleanCell(input.field || input.research_field || input.topic || input["研究领域"]),
+    integrity: cleanCell(input.integrity || input.source_quality || input["资料完整性说明"]),
+    overview,
     sourceFile,
     importedAt: input.importedAt || new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    updatedAt: input.updatedAt || new Date().toISOString(),
     rows,
+  };
+}
+
+function buildPaperBrief(rows) {
+  const preferred = rows.find((row) => row.dimension === "主要贡献" && row.summary)
+    || rows.find((row) => row.dimension === "研究目的" && row.summary)
+    || rows.find((row) => row.summary);
+  return preferred?.summary || "";
+}
+
+function hasPaperMetadata(metadata) {
+  return Boolean(metadata && (metadata.authors || metadata.venue || metadata.year || metadata.field || metadata.overview || metadata.integrity));
+}
+
+function mergePaperMetadata(paper, metadata) {
+  if (!paper || !hasPaperMetadata(metadata)) return paper;
+  return {
+    ...paper,
+    authors: paper.authors || metadata.authors || "",
+    venue: paper.venue || metadata.venue || "",
+    year: paper.year || metadata.year || "",
+    field: paper.field || metadata.field || "",
+    integrity: paper.integrity || metadata.integrity || "",
+    overview: paper.overview || metadata.overview || "",
   };
 }
 
@@ -566,7 +673,11 @@ function mergePapers(papers, sourceLabel, options = {}) {
   for (const paper of papers.filter(Boolean)) {
     const sameFingerprint = library.find((item) => item.fingerprint === paper.fingerprint);
     if (sameFingerprint) {
-      skipped += 1;
+      if (applyPaperMetadataUpdate(sameFingerprint, paper)) {
+        updated += 1;
+      } else {
+        skipped += 1;
+      }
       continue;
     }
 
@@ -577,6 +688,12 @@ function mergePapers(papers, sourceLabel, options = {}) {
         ...paper,
         id: existing.id,
         importedAt: existing.importedAt,
+        authors: paper.authors || existing.authors || "",
+        venue: paper.venue || existing.venue || "",
+        year: paper.year || existing.year || "",
+        field: paper.field || existing.field || "",
+        integrity: paper.integrity || existing.integrity || "",
+        overview: paper.overview || existing.overview || "",
         sourceFile: mergeSourceNames(existing.sourceFile, paper.sourceFile),
       };
       updated += 1;
@@ -593,6 +710,25 @@ function mergePapers(papers, sourceLabel, options = {}) {
   if (options.forceToast || (!options.quietWhenNoChange && (added || updated))) {
     toast(`${sourceLabel}完成：新增 ${added} 篇，更新 ${updated} 篇，跳过重复 ${skipped} 篇`);
   }
+}
+
+function applyPaperMetadataUpdate(existing, incoming) {
+  let changed = false;
+  for (const key of ["authors", "venue", "year", "field", "integrity", "overview"]) {
+    if (!existing[key] && incoming[key]) {
+      existing[key] = incoming[key];
+      changed = true;
+    }
+  }
+  if (incoming.sourceFile) {
+    const merged = mergeSourceNames(existing.sourceFile, incoming.sourceFile);
+    if (merged !== existing.sourceFile) {
+      existing.sourceFile = merged;
+      changed = true;
+    }
+  }
+  if (changed) existing.updatedAt = new Date().toISOString();
+  return changed;
 }
 
 function mergeSourceNames(a, b) {
@@ -623,18 +759,35 @@ function renderStats() {
 
 function getVisiblePapers() {
   return library
-    .map((paper) => ({ ...paper, visibleRows: filterRows(paper.rows, paper.title, paper.sourceFile) }))
+    .map((paper) => ({ ...paper, visibleRows: filterRows(paper.rows, paper) }))
     .filter((paper) => paper.visibleRows.length);
 }
 
-function filterRows(rows, title, sourceFile) {
+function filterRows(rows, paperOrTitle, maybeSourceFile = "") {
+  const paper = typeof paperOrTitle === "object"
+    ? paperOrTitle
+    : { title: paperOrTitle, sourceFile: maybeSourceFile };
   const query = filters.query.toLowerCase();
   return rows.filter((row) => {
     if (filters.dimension !== "all" && row.dimension !== filters.dimension) return false;
     if (filters.type !== "all" && row.basis_type !== filters.type) return false;
     if (filters.confidence !== "all" && row.confidence !== filters.confidence) return false;
     if (!query) return true;
-    const haystack = [title, sourceFile, row.dimension, row.basis_type, row.summary, row.evidence, row.confidence, row.review_suggestion].join(" ").toLowerCase();
+    const haystack = [
+      paper.title,
+      paper.sourceFile,
+      paper.authors,
+      paper.venue,
+      paper.year,
+      paper.field,
+      paper.overview,
+      row.dimension,
+      row.basis_type,
+      row.summary,
+      row.evidence,
+      row.confidence,
+      row.review_suggestion,
+    ].join(" ").toLowerCase();
     return haystack.includes(query);
   });
 }
@@ -645,42 +798,45 @@ function renderCards(papers) {
   for (const paper of papers) {
     const card = document.createElement("article");
     card.className = "paper-card";
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-label", `打开论文详情：${paper.title}`);
+    card.addEventListener("click", () => openDetail(paper.id));
+    card.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      openDetail(paper.id);
+    });
 
-    const header = document.createElement("header");
-    const titleWrap = document.createElement("div");
     const title = document.createElement("h3");
+    title.className = "paper-card-title";
     title.textContent = paper.title;
-    const meta = document.createElement("div");
-    meta.className = "paper-meta";
-    meta.append(badge(`${paper.rows.length} 行总结`), badge(formatDate(paper.importedAt)), ...typeBadges(paper.rows));
-    titleWrap.append(title, meta);
 
-    const actions = document.createElement("div");
-    actions.className = "card-actions";
-    const detailButton = button("查看", "tiny-button");
-    detailButton.addEventListener("click", () => openDetail(paper.id));
-    const deleteButton = button("删", "tiny-button");
-    deleteButton.title = "从浏览器本地库删除这篇文献";
-    deleteButton.addEventListener("click", () => deletePaper(paper.id));
-    actions.append(detailButton, deleteButton);
-    header.append(titleWrap, actions);
+    const venue = document.createElement("p");
+    venue.className = "paper-card-venue";
+    venue.textContent = compactVenue(paper) || "期刊/会议未标注";
 
-    const dimensionList = document.createElement("div");
-    dimensionList.className = "dimension-list";
-    for (const [dimension, rows] of groupRowsByDimension(paper.visibleRows)) {
-      dimensionList.append(renderDimensionSummary(dimension, rows));
-    }
+    const topic = document.createElement("p");
+    topic.className = "paper-card-topic";
+    topic.textContent = paper.field || inferTopic(paper.rows) || "主题未标注";
+
+    const brief = document.createElement("p");
+    brief.className = "paper-card-brief";
+    brief.textContent = shortText(paper.overview || buildPaperBrief(paper.visibleRows || paper.rows), 82);
 
     const footer = document.createElement("div");
-    footer.className = "card-footer";
-    const source = document.createElement("span");
-    source.className = "source-name";
-    source.textContent = paper.sourceFile;
-    const fullButton = button("打开详情", "button compact");
-    fullButton.addEventListener("click", () => openDetail(paper.id));
-    footer.append(source, fullButton);
+    footer.className = "paper-card-foot";
+    const count = document.createElement("span");
+    count.textContent = `${paper.rows.length} 点`;
+    const deleteButton = button("删", "tiny-button");
+    deleteButton.title = "从浏览器本地库删除这篇文献";
+    deleteButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      deletePaper(paper.id);
+    });
+    footer.append(count, deleteButton);
 
-    card.append(header, dimensionList, footer);
+    card.append(title, venue, topic, brief, footer);
     els.paperGrid.append(card);
   }
 }
@@ -710,11 +866,13 @@ function renderDimensionSummary(dimension, rows) {
 function openDetail(id) {
   const paper = library.find((item) => item.id === id);
   if (!paper) return;
-  const rows = filterRows(paper.rows, paper.title, paper.sourceFile);
+  const rows = filterRows(paper.rows, paper);
 
   els.detailSource.textContent = paper.sourceFile;
   els.detailTitle.textContent = paper.title;
-  els.detailMeta.replaceChildren(badge(`${paper.rows.length} 行总结`), badge(`导入 ${formatDate(paper.importedAt)}`), ...typeBadges(paper.rows));
+  els.detailMeta.replaceChildren(...paperDetailBadges(paper));
+  els.detailOverview.textContent = paper.overview || buildPaperBrief(paper.rows);
+  els.detailOverview.style.display = els.detailOverview.textContent ? "block" : "none";
   els.detailRows.replaceChildren();
 
   for (const [dimension, groupRows] of groupRowsByDimension(rows)) {
@@ -847,6 +1005,33 @@ function renderWatchStatusMeta() {
   if (skippedScanIssueCount) els.watchMeta.append(badge(`跳过 ${skippedScanIssueCount} 个失效项`, "type-missing"));
   if (importErrorCount) els.watchMeta.append(badge(`${importErrorCount} 个解析失败`, "type-missing"));
   if (lastScanAt) els.watchMeta.append(badge(`最近扫描 ${lastScanAt.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`));
+}
+
+function compactVenue(paper) {
+  if (paper.venue) return shortText(paper.venue, 68);
+  return paper.year || "";
+}
+
+function inferTopic(rows) {
+  const method = rows.find((row) => row.dimension === "使用技术/方法" && row.summary)?.summary;
+  const purpose = rows.find((row) => row.dimension === "研究目的" && row.summary)?.summary;
+  return shortText(method || purpose || "", 34);
+}
+
+function paperDetailBadges(paper) {
+  const badges = [];
+  if (paper.year && !String(paper.venue || "").includes(paper.year)) badges.push(badge(paper.year));
+  if (paper.venue) badges.push(badge(shortText(paper.venue, 80)));
+  if (paper.field) badges.push(badge(shortText(paper.field, 64)));
+  if (paper.authors) badges.push(badge(shortText(paper.authors, 70)));
+  badges.push(badge(`${paper.rows.length} 行总结`), badge(`导入 ${formatDate(paper.importedAt)}`), ...typeBadges(paper.rows));
+  return badges;
+}
+
+function shortText(value, limit = 80) {
+  const text = cleanCell(value);
+  if (text.length <= limit) return text;
+  return `${text.slice(0, Math.max(0, limit - 1)).trim()}…`;
 }
 
 function typeBadges(rows) {

@@ -124,6 +124,11 @@ Expected JSON shape:
 ```json
 {
   "paper_title": "Paper title",
+  "authors": "Author A; Author B",
+  "venue": "Journal or Conference; Year",
+  "year": "2026",
+  "field": "Research field",
+  "overview": "A short paper-level overview for the literature manager card.",
   "rows": [
     {
       "dimension": "研究目的",
@@ -137,7 +142,7 @@ Expected JSON shape:
 }
 ```
 
-Keep JSON and Excel rows as claim-level records, ordered by the six required dimensions. This preserves precise evidence anchors while allowing the webpage to display each dimension as a large category with bullet points.
+Keep JSON and Excel rows as claim-level records, ordered by the six required dimensions. Include the paper-level JSON fields above when available so the literature management webpage can render compact cards with title, venue/year, topic, and short overview instead of inferring them from claim rows.
 
 ## Library Archive Output
 

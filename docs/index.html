@@ -26,32 +26,6 @@
     </header>
 
     <main class="app-shell">
-      <section class="toolbar" aria-label="文献筛选">
-        <div class="search-wrap">
-          <label for="searchInput">搜索</label>
-          <input id="searchInput" type="search" placeholder="标题、总结、证据、核查建议" autocomplete="off" />
-        </div>
-        <div class="select-wrap">
-          <label for="dimensionFilter">维度</label>
-          <select id="dimensionFilter">
-            <option value="all">全部维度</option>
-          </select>
-        </div>
-        <div class="select-wrap">
-          <label for="typeFilter">类型</label>
-          <select id="typeFilter">
-            <option value="all">全部类型</option>
-          </select>
-        </div>
-        <div class="select-wrap">
-          <label for="confidenceFilter">置信度</label>
-          <select id="confidenceFilter">
-            <option value="all">全部置信度</option>
-          </select>
-        </div>
-        <button id="clearFiltersButton" class="button compact">重置</button>
-      </section>
-
       <section id="watchPanel" class="watch-panel">
         <div>
           <strong id="watchTitle">未监听输出目录</strong>
@@ -79,26 +53,54 @@
         </article>
       </section>
 
+      <section class="library-board" aria-label="文献缩略卡片墙">
+        <section class="toolbar" aria-label="文献筛选">
+          <div class="search-wrap">
+            <label for="searchInput">搜索</label>
+            <input id="searchInput" type="search" placeholder="搜索标题、期刊、主题、总结" autocomplete="off" />
+          </div>
+          <div class="select-wrap">
+            <label for="dimensionFilter">维度</label>
+            <select id="dimensionFilter">
+              <option value="all">全部维度</option>
+            </select>
+          </div>
+          <div class="select-wrap">
+            <label for="typeFilter">类型</label>
+            <select id="typeFilter">
+              <option value="all">全部类型</option>
+            </select>
+          </div>
+          <div class="select-wrap">
+            <label for="confidenceFilter">置信度</label>
+            <select id="confidenceFilter">
+              <option value="all">全部置信度</option>
+            </select>
+          </div>
+          <button id="clearFiltersButton" class="button compact">重置</button>
+        </section>
+
+        <section class="library-head">
+          <div>
+            <h2>文献卡片</h2>
+            <p id="resultSummary">暂无文献</p>
+          </div>
+          <button id="clearLibraryButton" class="text-button">清空本地库</button>
+        </section>
+
+        <section id="paperGrid" class="paper-grid" aria-live="polite"></section>
+
+        <section id="emptyState" class="empty-state">
+          <h2>还没有导入论文总结</h2>
+          <p>把 skill 生成的 `.xlsx`、`.json` 或 `.md` 文件拖到这里，第一张卡片就会出现。</p>
+        </section>
+      </section>
+
       <section id="dropZone" class="drop-zone">
         <div>
           <strong>拖入 summarize-paper 输出文件</strong>
           <span>支持 Excel、JSON、Markdown；数据保存在当前浏览器</span>
         </div>
-      </section>
-
-      <section class="library-head">
-        <div>
-          <h2>文献卡片</h2>
-          <p id="resultSummary">暂无文献</p>
-        </div>
-        <button id="clearLibraryButton" class="text-button">清空本地库</button>
-      </section>
-
-      <section id="paperGrid" class="paper-grid" aria-live="polite"></section>
-
-      <section id="emptyState" class="empty-state">
-        <h2>还没有导入论文总结</h2>
-        <p>把 skill 生成的 `.xlsx`、`.json` 或 `.md` 文件拖到这里，第一张卡片就会出现。</p>
       </section>
     </main>
 
@@ -112,6 +114,7 @@
           <button id="closeDetailButton" class="icon-button" aria-label="关闭详情">×</button>
         </div>
         <div id="detailMeta" class="detail-meta"></div>
+        <p id="detailOverview" class="detail-overview"></p>
         <div id="detailRows" class="detail-rows"></div>
       </div>
     </aside>

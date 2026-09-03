@@ -17,7 +17,7 @@ https://alitaliy.github.io/summarize-paper-skill/
 - 动态监听：点击“监听文件夹”，选择 `paper` 总目录或 skill 的归档输出目录；页面会每 5 秒递归扫描子文件夹中的总结输出并自动刷新。
 - 手动导入：直接拖入或选择 `summarize-paper` 生成的 Excel、JSON、Markdown 文件。
 
-网页只围绕 skill 输出的数据字段进行管理：`维度`、`类型`、`总结`、`原文依据/推测依据`、`置信度`、`后期核查建议`。你可以按文献卡片浏览、搜索、筛选维度、筛选来源类型、查看详情、删除条目，并把当前文献库导出为 JSON 备份。卡片和详情页会把同一个维度下的多条总结合并为“大类 + 小点”展示。
+网页只围绕 skill 输出的数据字段进行管理：`维度`、`类型`、`总结`、`原文依据/推测依据`、`置信度`、`后期核查建议`，并会读取 Markdown/JSON 中的 `作者`、`年份/会议或期刊`、`研究领域`、`总览` 作为卡片元数据。外层采用缩略卡片墙，只显示标题、期刊年份、主题和极短内容介绍；点击卡片后再打开完整详情。卡片和详情页会把同一个维度下的多条总结合并为“大类 + 小点”展示。
 
 
 ## 动态监听输出目录
@@ -158,6 +158,11 @@ JSON 输入格式：
 ```json
 {
   "paper_title": "Paper title",
+  "authors": "Author A; Author B",
+  "venue": "Journal or Conference; Year",
+  "year": "2026",
+  "field": "Research field",
+  "overview": "A short paper-level overview for the card and detail header.",
   "rows": [
     {
       "dimension": "研究目的",
@@ -174,6 +179,8 @@ JSON 输入格式：
 ## 网页接入数据
 
 每次运行 skill 后，可以把生成的 Excel、JSON 和 Markdown 放进对应论文文件夹。网页监听 `paper` 总目录后会递归扫描全部论文文件夹并自动导入；也可以继续手动拖入文件。推荐保留 JSON，因为它和 Excel 使用同一批结构化行，导入最稳定。
+
+卡片墙优先使用 JSON 或同目录 Markdown 中的论文级元数据：标题、作者、期刊/会议年份、研究领域和总览。Excel 仍可单独导入，但如果希望卡片信息更完整，建议同时保留 Markdown 或在 JSON 中写入这些论文级字段。
 
 如果使用归档脚本，可以这样把输出放入稳定的论文文件夹：
 
