@@ -77,7 +77,10 @@
               <option value="all">全部置信度</option>
             </select>
           </div>
-          <button id="clearFiltersButton" class="button compact">重置</button>
+          <div class="toolbar-actions">
+            <button id="clearFiltersButton" class="button compact">重置筛选</button>
+            <button id="clearLibraryButton" class="button compact subtle-danger">清空本地库</button>
+          </div>
         </section>
 
         <section class="library-head">
@@ -85,7 +88,6 @@
             <h2>文献卡片</h2>
             <p id="resultSummary">暂无文献</p>
           </div>
-          <button id="clearLibraryButton" class="text-button">清空本地库</button>
         </section>
 
         <section id="paperGrid" class="paper-grid" aria-live="polite"></section>

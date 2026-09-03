@@ -822,12 +822,12 @@ function renderCards(papers) {
 
     const brief = document.createElement("p");
     brief.className = "paper-card-brief";
-    brief.textContent = shortText(paper.overview || buildPaperBrief(paper.visibleRows || paper.rows), 82);
+    brief.textContent = cardBriefText(paper);
 
     const footer = document.createElement("div");
     footer.className = "paper-card-foot";
     const count = document.createElement("span");
-    count.textContent = `${paper.rows.length} 点`;
+    count.textContent = `${paper.rows.length} 点 · 点击查看`;
     const deleteButton = button("删", "tiny-button");
     deleteButton.title = "从浏览器本地库删除这篇文献";
     deleteButton.addEventListener("click", (event) => {
@@ -1016,6 +1016,11 @@ function inferTopic(rows) {
   const method = rows.find((row) => row.dimension === "使用技术/方法" && row.summary)?.summary;
   const purpose = rows.find((row) => row.dimension === "研究目的" && row.summary)?.summary;
   return shortText(method || purpose || "", 34);
+}
+
+function cardBriefText(paper) {
+  const text = paper.overview || buildPaperBrief(paper.visibleRows || paper.rows);
+  return shortText(text || "点击查看完整论文总结", 44);
 }
 
 function paperDetailBadges(paper) {

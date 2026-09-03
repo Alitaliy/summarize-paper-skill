@@ -130,6 +130,17 @@ h3 {
   align-self: end;
 }
 
+.button.subtle-danger {
+  border-color: rgba(189, 79, 63, 0.28);
+  background: rgba(246, 227, 222, 0.46);
+  color: var(--coral);
+}
+
+.button.subtle-danger:hover {
+  border-color: var(--coral);
+  background: var(--coral-soft);
+}
+
 .button input {
   display: none;
 }
@@ -170,7 +181,7 @@ h3 {
 
 .toolbar {
   display: grid;
-  grid-template-columns: repeat(4, minmax(126px, 170px)) auto;
+  grid-template-columns: repeat(3, minmax(126px, 170px));
   justify-content: center;
   gap: 10px 12px;
   align-items: end;
@@ -194,6 +205,14 @@ h3 {
   width: 100%;
   max-width: 420px;
   justify-self: center;
+}
+
+.toolbar-actions {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: center;
+  gap: 10px;
+  min-width: 0;
 }
 
 label {
@@ -295,10 +314,7 @@ textarea:focus {
 }
 
 .library-head {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 16px;
+  display: block;
   margin: 0 0 18px;
 }
 
@@ -320,10 +336,10 @@ textarea:focus {
 .paper-card {
   position: relative;
   display: grid;
-  grid-template-rows: 4px minmax(0, 50px) minmax(0, 18px) minmax(0, 18px) minmax(0, 39px) 26px;
+  grid-template-rows: 4px minmax(0, 48px) minmax(0, 17px) minmax(0, 17px) minmax(0, 19px) 26px;
   gap: 7px;
   min-width: 0;
-  height: 214px;
+  height: 188px;
   padding: 11px;
   border: 3px solid #171717;
   border-radius: 12px;
@@ -375,7 +391,7 @@ textarea:focus {
 .paper-card-title {
   min-height: 0;
   font-size: 12.5px;
-  line-height: 1.28;
+  line-height: 1.25;
 }
 
 .paper-card-venue,
@@ -386,8 +402,8 @@ textarea:focus {
   overflow: hidden;
   overflow-wrap: anywhere;
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.35;
+  font-size: 11.5px;
+  line-height: 1.32;
   word-break: break-word;
 }
 
@@ -411,7 +427,7 @@ textarea:focus {
 .paper-card-brief {
   display: -webkit-box;
   color: #4a5156;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
 }
 
@@ -422,7 +438,7 @@ textarea:focus {
   gap: 8px;
   min-width: 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 700;
 }
 
@@ -710,8 +726,7 @@ textarea {
 }
 
 @media (max-width: 880px) {
-  .app-header,
-  .library-head {
+  .app-header {
     align-items: stretch;
     flex-direction: column;
   }
@@ -740,6 +755,11 @@ textarea {
     max-width: 260px;
   }
 
+  .toolbar-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
   .search-wrap {
     max-width: none;
   }
@@ -765,7 +785,7 @@ textarea {
 
   .paper-card {
     width: 100%;
-    height: 206px;
+    height: 188px;
   }
 
   .library-board {
