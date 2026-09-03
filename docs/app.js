@@ -811,23 +811,31 @@ function renderCards(papers) {
     const title = document.createElement("h3");
     title.className = "paper-card-title";
     title.textContent = paper.title;
+    title.title = paper.title;
 
     const venue = document.createElement("p");
     venue.className = "paper-card-venue";
     venue.textContent = compactVenue(paper) || "期刊/会议未标注";
+    venue.title = venue.textContent;
 
     const topic = document.createElement("p");
     topic.className = "paper-card-topic";
     topic.textContent = paper.field || inferTopic(paper.rows) || "主题未标注";
+    topic.title = topic.textContent;
 
     const brief = document.createElement("p");
     brief.className = "paper-card-brief";
     brief.textContent = cardBriefText(paper);
+    brief.title = brief.textContent;
+
+    const body = document.createElement("div");
+    body.className = "paper-card-body";
+    body.append(title, venue, topic, brief);
 
     const footer = document.createElement("div");
     footer.className = "paper-card-foot";
     const count = document.createElement("span");
-    count.textContent = `${paper.rows.length} 点 · 点击查看`;
+    count.textContent = `${paper.rows.length} 点 · 滚动/点击`;
     const deleteButton = button("删", "tiny-button");
     deleteButton.title = "从浏览器本地库删除这篇文献";
     deleteButton.addEventListener("click", (event) => {
@@ -836,7 +844,7 @@ function renderCards(papers) {
     });
     footer.append(count, deleteButton);
 
-    card.append(title, venue, topic, brief, footer);
+    card.append(body, footer);
     els.paperGrid.append(card);
   }
 }
@@ -1008,19 +1016,19 @@ function renderWatchStatusMeta() {
 }
 
 function compactVenue(paper) {
-  if (paper.venue) return shortText(paper.venue, 68);
+  if (paper.venue) return paper.venue;
   return paper.year || "";
 }
 
 function inferTopic(rows) {
   const method = rows.find((row) => row.dimension === "使用技术/方法" && row.summary)?.summary;
   const purpose = rows.find((row) => row.dimension === "研究目的" && row.summary)?.summary;
-  return shortText(method || purpose || "", 34);
+  return cleanCell(method || purpose || "");
 }
 
 function cardBriefText(paper) {
   const text = paper.overview || buildPaperBrief(paper.visibleRows || paper.rows);
-  return shortText(text || "点击查看完整论文总结", 44);
+  return cleanCell(text || "点击查看完整论文总结");
 }
 
 function paperDetailBadges(paper) {
