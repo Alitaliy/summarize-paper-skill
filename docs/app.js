@@ -491,10 +491,12 @@ function parseMarkdownMetadata(text, sourceFile = "summary.md") {
   const basicInfo = parseBasicInfoBlock(text);
   const overview = cleanMarkdownText(extractSection(text, "总览"));
   const venue = basicInfo["年份/会议或期刊"] || basicInfo["会议或期刊"] || basicInfo["期刊"] || basicInfo["年份"];
+  const doi = extractDoi([basicInfo["DOI"], basicInfo["doi"], venue, text].join(" "));
   return {
     title,
     authors: basicInfo["作者"],
     venue,
+    doi,
     year: extractYear(venue || basicInfo["年份"]),
     field: basicInfo["研究领域"],
     integrity: basicInfo["资料完整性说明"],
@@ -536,6 +538,16 @@ function escapeRegExp(value) {
 
 function extractYear(value) {
   return String(value || "").match(/(?:19|20)\d{2}/)?.[0] || "";
+}
+
+function extractDoi(value) {
+  const match = String(value || "").match(/\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+/i);
+  if (!match) return "";
+  let doi = match[0].replace(/[.,;:，。；：、]+$/g, "");
+  while ((doi.match(/\(/g) || []).length < (doi.match(/\)/g) || []).length) {
+    doi = doi.slice(0, -1);
+  }
+  return doi;
 }
 
 function parseGroupedMarkdown(text) {
@@ -609,12 +621,14 @@ function normalizePaper(input) {
   const venue = cleanCell(input.venue || input.journal || input.publication || input["年份/会议或期刊"]);
   const year = cleanCell(input.year || extractYear(venue));
   const overview = cleanCell(input.overview || input.abstract || input.brief || buildPaperBrief(rows));
+  const doi = extractDoi([input.doi, input.DOI, input["DOI"], venue, overview, sourceFile].join(" "));
   return {
     id: input.id || `paper-${hashString(title)}`,
     fingerprint,
     title,
     authors: cleanCell(input.authors || input.author || input["作者"]),
     venue,
+    doi,
     year,
     field: cleanCell(input.field || input.research_field || input.topic || input["研究领域"]),
     integrity: cleanCell(input.integrity || input.source_quality || input["资料完整性说明"]),
@@ -634,7 +648,7 @@ function buildPaperBrief(rows) {
 }
 
 function hasPaperMetadata(metadata) {
-  return Boolean(metadata && (metadata.authors || metadata.venue || metadata.year || metadata.field || metadata.overview || metadata.integrity));
+  return Boolean(metadata && (metadata.authors || metadata.venue || metadata.doi || metadata.year || metadata.field || metadata.overview || metadata.integrity));
 }
 
 function mergePaperMetadata(paper, metadata) {
@@ -643,6 +657,7 @@ function mergePaperMetadata(paper, metadata) {
     ...paper,
     authors: paper.authors || metadata.authors || "",
     venue: paper.venue || metadata.venue || "",
+    doi: paper.doi || metadata.doi || "",
     year: paper.year || metadata.year || "",
     field: paper.field || metadata.field || "",
     integrity: paper.integrity || metadata.integrity || "",
@@ -690,6 +705,7 @@ function mergePapers(papers, sourceLabel, options = {}) {
         importedAt: existing.importedAt,
         authors: paper.authors || existing.authors || "",
         venue: paper.venue || existing.venue || "",
+        doi: paper.doi || existing.doi || "",
         year: paper.year || existing.year || "",
         field: paper.field || existing.field || "",
         integrity: paper.integrity || existing.integrity || "",
@@ -714,7 +730,7 @@ function mergePapers(papers, sourceLabel, options = {}) {
 
 function applyPaperMetadataUpdate(existing, incoming) {
   let changed = false;
-  for (const key of ["authors", "venue", "year", "field", "integrity", "overview"]) {
+  for (const key of ["authors", "venue", "doi", "year", "field", "integrity", "overview"]) {
     if (!existing[key] && incoming[key]) {
       existing[key] = incoming[key];
       changed = true;
@@ -778,6 +794,7 @@ function filterRows(rows, paperOrTitle, maybeSourceFile = "") {
       paper.sourceFile,
       paper.authors,
       paper.venue,
+      paper.doi,
       paper.year,
       paper.field,
       paper.overview,
@@ -813,10 +830,11 @@ function renderCards(papers) {
     title.textContent = paper.title;
     title.title = paper.title;
 
+    const doi = cardDoiText(paper);
     const venue = document.createElement("p");
     venue.className = "paper-card-venue";
-    venue.textContent = compactVenue(paper) || "期刊/会议未标注";
-    venue.title = venue.textContent;
+    venue.textContent = doi;
+    venue.title = doi;
 
     const topic = document.createElement("p");
     topic.className = "paper-card-topic";
@@ -830,7 +848,9 @@ function renderCards(papers) {
 
     const body = document.createElement("div");
     body.className = "paper-card-body";
-    body.append(title, venue, topic, brief);
+    body.append(title);
+    if (doi) body.append(venue);
+    body.append(topic, brief);
 
     const footer = document.createElement("div");
     footer.className = "paper-card-foot";
@@ -1015,9 +1035,8 @@ function renderWatchStatusMeta() {
   if (lastScanAt) els.watchMeta.append(badge(`最近扫描 ${lastScanAt.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`));
 }
 
-function compactVenue(paper) {
-  if (paper.venue) return paper.venue;
-  return paper.year || "";
+function cardDoiText(paper) {
+  return paper.doi || extractDoi([paper.venue, paper.overview, paper.sourceFile].join(" "));
 }
 
 function inferTopic(rows) {
@@ -1033,6 +1052,7 @@ function cardBriefText(paper) {
 
 function paperDetailBadges(paper) {
   const badges = [];
+  if (paper.doi) badges.push(badge(`DOI ${shortText(paper.doi, 80)}`));
   if (paper.year && !String(paper.venue || "").includes(paper.year)) badges.push(badge(paper.year));
   if (paper.venue) badges.push(badge(shortText(paper.venue, 80)));
   if (paper.field) badges.push(badge(shortText(paper.field, 64)));
