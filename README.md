@@ -17,7 +17,7 @@ https://alitaliy.github.io/summarize-paper-skill/
 - 动态监听：点击“监听文件夹”，选择 `paper` 总目录或 skill 的归档输出目录；页面会每 5 秒递归扫描子文件夹中的总结输出并自动刷新。
 - 手动导入：直接拖入或选择 `summarize-paper` 生成的 Excel、JSON、Markdown 文件。
 
-网页只围绕 skill 输出的数据字段进行管理：`维度`、`类型`、`总结`、`原文依据/推测依据`、`置信度`、`后期核查建议`，并会读取 Markdown/JSON 中的 `作者`、`年份/会议或期刊`、`研究领域`、`总览` 作为卡片元数据。外层采用缩略卡片墙，只显示标题、期刊年份、主题和极短内容介绍；点击卡片后再打开完整详情。卡片和详情页会把同一个维度下的多条总结合并为“大类 + 小点”展示。
+网页只围绕 skill 输出的数据进行管理：论文元数据、六类总结，以及按研究方向归并的引用文献。外层缩略卡片只显示标题、DOI、主题和极短内容介绍；点击卡片后可在“论文总结 / 引用脉络”两个页签间切换。引用脉络保留题名、作者、年份、来源、DOI/链接、与本文关系和分类依据，方便继续追踪原始文献。
 
 
 ## 动态监听输出目录
@@ -82,6 +82,8 @@ $env:SUMMARIZE_PAPER_LIBRARY_DIR = "C:\Users\你的用户名\Desktop\project\sum
 - 每条事实性内容都要求提供简短证据锚点，例如页码、章节、表格、图号或段落位置。
 - 推测内容必须单独标注为 `合理推测`，并使用谨慎措辞。
 - Markdown 会按维度大类聚合为小点列表；JSON 与 Excel 保留 claim-level 行记录，便于网页分组展示和证据追踪。
+- 参考文献会按研究大方向归并；每条文献只进入一个主要方向，并保留可追踪字段和分类依据。
+- Excel 包含 `论文总结` 与 `引用文献脉络` 两个工作表，网页可从 JSON、Markdown 或 Excel 恢复引用分类。
 
 ## 仓库结构
 
@@ -98,6 +100,8 @@ summarize-paper-skill/
     |-- SKILL.md
     |-- agents/
     |   `-- openai.yaml
+    |-- references/
+    |   `-- citation-map.md
     `-- scripts/
         |-- archive_summary_outputs.py
         `-- write_paper_summary_excel.py
@@ -163,6 +167,26 @@ JSON 输入格式：
   "year": "2026",
   "field": "Research field",
   "overview": "A short paper-level overview for the card and detail header.",
+  "reference_groups": [
+    {
+      "direction": "Research direction",
+      "summary": "Shared topic and connection to the current paper.",
+      "references": [
+        {
+          "ref_id": "[12]",
+          "title": "Cited paper title",
+          "authors": "Author A; Author B",
+          "year": "2022",
+          "venue": "Journal or Conference",
+          "doi": "10.xxxx/example",
+          "url": "https://doi.org/10.xxxx/example",
+          "relation": "Method foundation",
+          "classification_basis": "Reference title; citation context in Introduction",
+          "traceability": "完整"
+        }
+      ]
+    }
+  ],
   "rows": [
     {
       "dimension": "研究目的",
@@ -199,6 +223,8 @@ python summarize-paper/scripts/archive_summary_outputs.py summary.json paper_sum
 - `置信度`
 - `后期核查建议`
 
+新版 Excel 还会生成 `引用文献脉络` 工作表，列名为：`大方向`、`方向概括`、`引用编号`、`题名`、`作者`、`年份`、`来源`、`DOI`、`链接`、`与本文关系`、`分类依据`、`可追踪性`。
+
 ## 质量检查要求
 
 完成论文总结前，应确认：
@@ -208,6 +234,7 @@ python summarize-paper/scripts/archive_summary_outputs.py summary.json paper_sum
 - 所有推测内容都标注为 `合理推测`。
 - 推测内容没有混入 `原文明确` 或 `原文概括` 行。
 - Markdown 与 Excel 的总结行完全一致。
+- Markdown、JSON 与 Excel 中的引用方向和文献条目一致；缺失的 DOI 或链接保持为空，不凭空补全。
 - 原文没有提供的信息标注为 `未提及`，不凭空补充。
 - 如果论文是扫描件、文本抽取不完整或表格/公式抽取混乱，应在总结前说明限制。
 

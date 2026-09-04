@@ -31,6 +31,36 @@ KEYS = [
     "review_suggestion",
 ]
 
+REFERENCE_HEADERS = [
+    "大方向",
+    "方向概括",
+    "引用编号",
+    "题名",
+    "作者",
+    "年份",
+    "来源",
+    "DOI",
+    "链接",
+    "与本文关系",
+    "分类依据",
+    "可追踪性",
+]
+
+REFERENCE_KEYS = [
+    "direction",
+    "direction_summary",
+    "ref_id",
+    "title",
+    "authors",
+    "year",
+    "venue",
+    "doi",
+    "url",
+    "relation",
+    "classification_basis",
+    "traceability",
+]
+
 
 def sanitize_sheet_name(name: str) -> str:
     name = re.sub(r"[\[\]\:\*\?\/\\]", " ", name).strip()
@@ -87,7 +117,78 @@ def worksheet_xml(title: str, rows: list[dict[str, object]]) -> str:
     <col min="6" max="6" width="32" customWidth="1"/>
   </cols>
   <sheetData>{''.join(xml_rows)}</sheetData>
+  <mergeCells count="1"><mergeCell ref="A1:F1"/></mergeCells>
   <autoFilter ref="A2:F{last_row}"/>
+</worksheet>'''
+
+
+def flatten_reference_rows(data: dict[str, object]) -> list[dict[str, object]]:
+    groups = data.get("reference_groups")
+    if not isinstance(groups, list):
+        return []
+
+    output: list[dict[str, object]] = []
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        direction = group.get("direction") or group.get("name") or "待核查/方向不明"
+        direction_summary = group.get("summary") or group.get("description") or ""
+        references = group.get("references")
+        if not isinstance(references, list) or not references:
+            output.append({"direction": direction, "direction_summary": direction_summary})
+            continue
+        for reference in references:
+            if isinstance(reference, str):
+                reference = {"citation": reference}
+            if not isinstance(reference, dict):
+                continue
+            output.append(
+                {
+                    "direction": direction,
+                    "direction_summary": direction_summary,
+                    "ref_id": reference.get("ref_id") or reference.get("label") or reference.get("number") or "",
+                    "title": reference.get("title") or reference.get("citation") or "",
+                    "authors": reference.get("authors") or reference.get("author") or "",
+                    "year": reference.get("year") or "",
+                    "venue": reference.get("venue") or reference.get("source") or "",
+                    "doi": reference.get("doi") or "",
+                    "url": reference.get("url") or reference.get("link") or "",
+                    "relation": reference.get("relation") or "",
+                    "classification_basis": reference.get("classification_basis") or reference.get("basis") or "",
+                    "traceability": reference.get("traceability") or "",
+                }
+            )
+    return output
+
+
+def reference_worksheet_xml(title: str, rows: list[dict[str, object]]) -> str:
+    xml_rows = [
+        '<row r="1" ht="24" customHeight="1">'
+        + inline_cell(1, 1, f"引用文献脉络：{title}", 1)
+        + "</row>",
+        '<row r="2">'
+        + "".join(inline_cell(2, idx + 1, header, 2) for idx, header in enumerate(REFERENCE_HEADERS))
+        + "</row>",
+    ]
+
+    for row_idx, item in enumerate(rows, start=3):
+        cells = [inline_cell(row_idx, col_idx, item.get(key, ""), None) for col_idx, key in enumerate(REFERENCE_KEYS, start=1)]
+        xml_rows.append(f'<row r="{row_idx}">' + "".join(cells) + "</row>")
+
+    widths = [22, 38, 12, 48, 28, 10, 28, 24, 36, 28, 34, 12]
+    columns = "".join(
+        f'<col min="{idx}" max="{idx}" width="{width}" customWidth="1"/>'
+        for idx, width in enumerate(widths, start=1)
+    )
+    last_row = max(len(rows) + 2, 2)
+    return f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+ xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheetViews><sheetView workbookViewId="0"><pane ySplit="2" topLeftCell="A3" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+  <cols>{columns}</cols>
+  <sheetData>{''.join(xml_rows)}</sheetData>
+  <mergeCells count="1"><mergeCell ref="A1:L1"/></mergeCells>
+  <autoFilter ref="A2:L{last_row}"/>
 </worksheet>'''
 
 
@@ -96,8 +197,10 @@ def write_xlsx(data: dict[str, object], output_path: Path) -> None:
     rows = data.get("rows")
     if not isinstance(rows, list):
         raise ValueError("JSON must contain a 'rows' array.")
+    reference_rows = flatten_reference_rows(data)
 
     sheet_name = sanitize_sheet_name("论文总结")
+    reference_sheet_name = sanitize_sheet_name("引用文献脉络")
     created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     files = {
@@ -107,6 +210,7 @@ def write_xlsx(data: dict[str, object], output_path: Path) -> None:
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
   <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
   <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
   <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
   <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
@@ -120,14 +224,19 @@ def write_xlsx(data: dict[str, object], output_path: Path) -> None:
         "xl/workbook.xml": f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-  <sheets><sheet name="{escape(sheet_name)}" sheetId="1" r:id="rId1"/></sheets>
+  <sheets>
+    <sheet name="{escape(sheet_name)}" sheetId="1" r:id="rId1"/>
+    <sheet name="{escape(reference_sheet_name)}" sheetId="2" r:id="rId2"/>
+  </sheets>
 </workbook>''',
         "xl/_rels/workbook.xml.rels": '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>''',
         "xl/worksheets/sheet1.xml": worksheet_xml(title, rows),
+        "xl/worksheets/sheet2.xml": reference_worksheet_xml(title, reference_rows),
         "xl/styles.xml": '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <fonts count="3">

@@ -15,6 +15,20 @@ const HEADER_MAP = new Map([
   ["置信度", "confidence"],
   ["后期核查建议", "review_suggestion"],
 ]);
+const REFERENCE_HEADER_MAP = new Map([
+  ["大方向", "direction"],
+  ["方向概括", "direction_summary"],
+  ["引用编号", "ref_id"],
+  ["题名", "title"],
+  ["作者", "authors"],
+  ["年份", "year"],
+  ["来源", "venue"],
+  ["DOI", "doi"],
+  ["链接", "url"],
+  ["与本文关系", "relation"],
+  ["分类依据", "classification_basis"],
+  ["可追踪性", "traceability"],
+]);
 const SUPPORTED_FILE_RE = /\.(xlsx|xls|json|md|markdown)$/i;
 const WATCH_OUTPUT_FILE_RE = /(^|\/)(summary|paper_summary|[^/]+_paper_summary)\.(xlsx|xls|json|md|markdown)$/i;
 const IGNORED_IMPORT_RE = /(^|\/)(manifest|package-lock|package)\.json$/i;
@@ -64,6 +78,7 @@ function bindElements() {
     rowCount: document.querySelector("#rowCount"),
     sourceBackedCount: document.querySelector("#sourceBackedCount"),
     inferredCount: document.querySelector("#inferredCount"),
+    referenceCount: document.querySelector("#referenceCount"),
     resultSummary: document.querySelector("#resultSummary"),
     watchPanel: document.querySelector("#watchPanel"),
     watchTitle: document.querySelector("#watchTitle"),
@@ -75,6 +90,13 @@ function bindElements() {
     detailMeta: document.querySelector("#detailMeta"),
     detailOverview: document.querySelector("#detailOverview"),
     detailRows: document.querySelector("#detailRows"),
+    summaryTab: document.querySelector("#summaryTab"),
+    referencesTab: document.querySelector("#referencesTab"),
+    summaryPane: document.querySelector("#summaryPane"),
+    referencesPane: document.querySelector("#referencesPane"),
+    detailReferences: document.querySelector("#detailReferences"),
+    detailReferenceCount: document.querySelector("#detailReferenceCount"),
+    referenceEmpty: document.querySelector("#referenceEmpty"),
     closeDetailButton: document.querySelector("#closeDetailButton"),
     pasteDialog: document.querySelector("#pasteDialog"),
     pasteText: document.querySelector("#pasteText"),
@@ -175,6 +197,8 @@ function bindEvents() {
   });
 
   els.closeDetailButton.addEventListener("click", closeDetail);
+  els.summaryTab.addEventListener("click", () => selectDetailTab("summary"));
+  els.referencesTab.addEventListener("click", () => selectDetailTab("references"));
   els.detailPanel.addEventListener("click", (event) => {
     if (event.target === els.detailPanel) closeDetail();
   });
@@ -465,7 +489,8 @@ async function parseWorkbook(file, sourcePath) {
   const headers = matrix[headerIndex].map((cell) => String(cell).trim());
   const rows = matrix.slice(headerIndex + 1).map((line) => rowFromHeaders(headers, line)).filter((row) => row.summary || row.dimension);
   if (!rows.length) throw new Error("没有读到总结行");
-  return normalizePaper({ title, rows, sourceFile: sourcePath });
+  const referenceGroups = parseWorkbookReferenceGroups(workbook);
+  return normalizePaper({ title, rows, reference_groups: referenceGroups, sourceFile: sourcePath });
 }
 
 function rowFromHeaders(headers, values) {
@@ -475,6 +500,24 @@ function rowFromHeaders(headers, values) {
     if (key) row[key] = cleanCell(values[index]);
   });
   return normalizeRow(row);
+}
+
+function parseWorkbookReferenceGroups(workbook) {
+  const sheetName = workbook.SheetNames.find((name) => name.includes("引用文献脉络"));
+  if (!sheetName) return [];
+  const matrix = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: "" });
+  const headerIndex = matrix.findIndex((row) => row.some((cell) => String(cell).trim() === "大方向"));
+  if (headerIndex < 0) return [];
+  const headers = matrix[headerIndex].map((cell) => String(cell).trim());
+  const rows = matrix.slice(headerIndex + 1).map((values) => {
+    const row = {};
+    headers.forEach((header, index) => {
+      const key = REFERENCE_HEADER_MAP.get(header);
+      if (key) row[key] = cleanCell(values[index]);
+    });
+    return row;
+  }).filter((row) => row.direction || row.title || row.ref_id);
+  return referenceGroupsFromFlatRows(rows);
 }
 
 function parseMarkdown(text, sourceFile = "summary.md") {
@@ -491,7 +534,10 @@ function parseMarkdownMetadata(text, sourceFile = "summary.md") {
   const basicInfo = parseBasicInfoBlock(text);
   const overview = cleanMarkdownText(extractSection(text, "总览"));
   const venue = basicInfo["年份/会议或期刊"] || basicInfo["会议或期刊"] || basicInfo["期刊"] || basicInfo["年份"];
-  const doi = extractDoi([basicInfo["DOI"], basicInfo["doi"], venue, text].join(" "));
+  const metadataEnd = [text.indexOf("## 逐项总结"), text.indexOf("## 引用文献脉络")].filter((index) => index >= 0);
+  const metadataText = text.slice(0, metadataEnd.length ? Math.min(...metadataEnd) : Math.min(text.length, 3000));
+  const doi = extractDoi([basicInfo["DOI"], basicInfo["doi"], venue, metadataText].join(" "));
+  const referenceGroups = parseReferenceGroupsFromMarkdown(text);
   return {
     title,
     authors: basicInfo["作者"],
@@ -501,6 +547,7 @@ function parseMarkdownMetadata(text, sourceFile = "summary.md") {
     field: basicInfo["研究领域"],
     integrity: basicInfo["资料完整性说明"],
     overview,
+    reference_groups: referenceGroups,
   };
 }
 
@@ -553,7 +600,7 @@ function extractDoi(value) {
 function parseGroupedMarkdown(text) {
   const start = text.indexOf("## 逐项总结");
   if (start < 0) return [];
-  const endCandidates = ["## 推测内容清单", "## 需注意的原文限制"].map((heading) => text.indexOf(heading, start + 1)).filter((index) => index > start);
+  const endCandidates = ["## 引用文献脉络", "## 推测内容清单", "## 需注意的原文限制"].map((heading) => text.indexOf(heading, start + 1)).filter((index) => index > start);
   const end = endCandidates.length ? Math.min(...endCandidates) : text.length;
   const block = text.slice(start, end);
   const rows = [];
@@ -581,7 +628,10 @@ function parseGroupedMarkdown(text) {
 
 function parseMarkdownTable(text) {
   const start = text.indexOf("## 逐项总结");
-  const end = text.indexOf("## 推测内容清单", start);
+  const endCandidates = ["## 引用文献脉络", "## 推测内容清单", "## 需注意的原文限制"]
+    .map((heading) => text.indexOf(heading, start + 1))
+    .filter((index) => index > start);
+  const end = endCandidates.length ? Math.min(...endCandidates) : -1;
   const block = text.slice(start >= 0 ? start : 0, end >= 0 ? end : text.length);
   return block.split(/\r?\n/)
     .filter((line) => line.trim().startsWith("|") && !/^\|\s*-+/.test(line) && !/^\|\s*维度\s*\|/.test(line))
@@ -612,9 +662,72 @@ function splitMarkdownRow(line) {
   return cells.map((cell) => cell.replace(/<br\s*\/?>/gi, "\n"));
 }
 
+function parseReferenceGroupsFromMarkdown(text) {
+  const block = extractSection(text, "引用文献脉络");
+  if (!block) return [];
+
+  const groups = [];
+  let current = null;
+  let tableHeaders = [];
+  for (const line of block.split(/\r?\n/)) {
+    const heading = line.match(/^###\s+(?:大方向[：:]\s*)?(.+)$/);
+    if (heading) {
+      current = { direction: cleanMarkdownText(heading[1]), summary: "", references: [] };
+      groups.push(current);
+      tableHeaders = [];
+      continue;
+    }
+    if (!current) continue;
+
+    const summary = line.match(/^[-*]\s*方向(?:概括|说明)[：:]\s*(.+)$/);
+    if (summary) {
+      current.summary = cleanMarkdownText(summary[1]);
+      continue;
+    }
+    if (!line.trim().startsWith("|")) continue;
+
+    const cells = splitMarkdownRow(line);
+    if (cells.every((cell) => /^:?-{3,}:?$/.test(cell))) continue;
+    if (!tableHeaders.length && cells.some((cell) => REFERENCE_HEADER_MAP.has(cleanMarkdownText(cell)))) {
+      tableHeaders = cells.map((cell) => cleanMarkdownText(cell));
+      continue;
+    }
+    if (!tableHeaders.length) continue;
+
+    const reference = {};
+    tableHeaders.forEach((header, index) => {
+      const key = REFERENCE_HEADER_MAP.get(header);
+      if (!key || key === "direction" || key === "direction_summary") return;
+      const raw = cells[index] || "";
+      reference[key] = key === "url" ? extractMarkdownUrl(raw) || cleanMarkdownText(raw) : cleanMarkdownText(raw);
+    });
+    if (reference.title || reference.ref_id || reference.citation) current.references.push(reference);
+  }
+  return normalizeReferenceGroups(groups);
+}
+
+function extractMarkdownUrl(value) {
+  return String(value || "").match(/\]\((https?:\/\/[^)]+)\)/i)?.[1]?.trim() || "";
+}
+
+function referenceGroupsFromFlatRows(rows) {
+  const grouped = new Map();
+  for (const row of rows) {
+    const direction = cleanCell(row.direction || "待核查/方向不明");
+    if (!grouped.has(direction)) grouped.set(direction, { direction, summary: cleanCell(row.direction_summary), references: [] });
+    const group = grouped.get(direction);
+    if (!group.summary && row.direction_summary) group.summary = cleanCell(row.direction_summary);
+    if (row.title || row.ref_id || row.citation) group.references.push(row);
+  }
+  return normalizeReferenceGroups([...grouped.values()]);
+}
+
 function normalizePaper(input) {
   const rows = (input.rows || []).map(normalizeRow).filter((row) => row.dimension || row.summary);
   if (!rows.length) return null;
+  const referenceGroups = normalizeReferenceGroups(
+    input.reference_groups || input.referenceGroups || input.citation_groups || input.references_by_direction || input["引用文献脉络"] || [],
+  );
   const title = cleanCell(input.paper_title || input.title || input.name || `未命名论文 ${input.fallbackIndex || ""}`) || "未命名论文";
   const sourceFile = cleanCell(input.sourceFile || input.source_file || "手动导入");
   const fingerprint = hashString(`${title}\n${JSON.stringify(rows)}`);
@@ -637,6 +750,7 @@ function normalizePaper(input) {
     importedAt: input.importedAt || new Date().toISOString(),
     updatedAt: input.updatedAt || new Date().toISOString(),
     rows,
+    reference_groups: referenceGroups,
   };
 }
 
@@ -648,7 +762,10 @@ function buildPaperBrief(rows) {
 }
 
 function hasPaperMetadata(metadata) {
-  return Boolean(metadata && (metadata.authors || metadata.venue || metadata.doi || metadata.year || metadata.field || metadata.overview || metadata.integrity));
+  return Boolean(metadata && (
+    metadata.authors || metadata.venue || metadata.doi || metadata.year || metadata.field || metadata.overview || metadata.integrity
+    || normalizeReferenceGroups(metadata.reference_groups || []).length
+  ));
 }
 
 function mergePaperMetadata(paper, metadata) {
@@ -662,6 +779,7 @@ function mergePaperMetadata(paper, metadata) {
     field: paper.field || metadata.field || "",
     integrity: paper.integrity || metadata.integrity || "",
     overview: paper.overview || metadata.overview || "",
+    reference_groups: paper.reference_groups?.length ? paper.reference_groups : normalizeReferenceGroups(metadata.reference_groups || []),
   };
 }
 
@@ -673,6 +791,48 @@ function normalizeRow(input) {
     evidence: cleanCell(input.evidence || input["原文依据/推测依据"]),
     confidence: cleanCell(input.confidence || input["置信度"]),
     review_suggestion: cleanCell(input.review_suggestion || input.reviewSuggestion || input["后期核查建议"]),
+  };
+}
+
+function normalizeReferenceGroups(input) {
+  if (!Array.isArray(input)) return [];
+  return input.map((group) => {
+    if (!group || typeof group !== "object") return null;
+    const references = group.references || group.citations || group.items || group["文献"] || [];
+    const normalizedReferences = (Array.isArray(references) ? references : [])
+      .map(normalizeReference)
+      .filter((reference) => reference.title || reference.citation || reference.ref_id);
+    const direction = cleanCell(group.direction || group.name || group.topic || group["大方向"] || "待核查/方向不明");
+    const summary = cleanCell(group.summary || group.description || group.direction_summary || group["方向概括"]);
+    if (!normalizedReferences.length && !summary) return null;
+    return { direction, summary, references: normalizedReferences };
+  }).filter(Boolean);
+}
+
+function normalizeReference(input) {
+  const item = typeof input === "string" ? { citation: input } : (input || {});
+  const citation = cleanCell(item.citation || item.full_citation || item["完整引文"]);
+  const doi = extractDoi([item.doi, item.DOI, item["DOI"], item.url, item.link, citation].join(" "));
+  let url = cleanCell(item.url || item.link || item["链接"]);
+  if (!/^https?:\/\//i.test(url)) url = "";
+  if (!url && doi) url = `https://doi.org/${doi}`;
+  const title = cleanCell(item.title || item.paper_title || item["题名"]);
+  const authors = cleanCell(item.authors || item.author || item["作者"]);
+  const year = cleanCell(item.year || item["年份"] || extractYear(citation));
+  let traceability = cleanCell(item.traceability || item["可追踪性"]);
+  if (!traceability) traceability = doi || url ? "完整" : (title && (authors || year) ? "部分" : "待核查");
+  return {
+    ref_id: cleanCell(item.ref_id || item.label || item.number || item["引用编号"]),
+    title,
+    authors,
+    year,
+    venue: cleanCell(item.venue || item.source || item.publication || item["来源"]),
+    doi,
+    url,
+    citation,
+    relation: cleanCell(item.relation || item.role || item["与本文关系"]),
+    classification_basis: cleanCell(item.classification_basis || item.basis || item.evidence || item["分类依据"]),
+    traceability,
   };
 }
 
@@ -710,6 +870,7 @@ function mergePapers(papers, sourceLabel, options = {}) {
         field: paper.field || existing.field || "",
         integrity: paper.integrity || existing.integrity || "",
         overview: paper.overview || existing.overview || "",
+        reference_groups: paper.reference_groups?.length ? paper.reference_groups : (existing.reference_groups || []),
         sourceFile: mergeSourceNames(existing.sourceFile, paper.sourceFile),
       };
       updated += 1;
@@ -733,6 +894,14 @@ function applyPaperMetadataUpdate(existing, incoming) {
   for (const key of ["authors", "venue", "doi", "year", "field", "integrity", "overview"]) {
     if (!existing[key] && incoming[key]) {
       existing[key] = incoming[key];
+      changed = true;
+    }
+  }
+  if (incoming.reference_groups?.length) {
+    const current = JSON.stringify(existing.reference_groups || []);
+    const next = JSON.stringify(incoming.reference_groups);
+    if (current !== next) {
+      existing.reference_groups = incoming.reference_groups;
       changed = true;
     }
   }
@@ -767,10 +936,12 @@ function render() {
 
 function renderStats() {
   const rows = library.flatMap((paper) => paper.rows);
+  const references = library.flatMap(paperReferences);
   els.paperCount.textContent = library.length;
   els.rowCount.textContent = rows.length;
   els.sourceBackedCount.textContent = rows.filter((row) => row.basis_type === "原文明确" || row.basis_type === "原文概括").length;
   els.inferredCount.textContent = rows.filter((row) => row.basis_type === "合理推测").length;
+  els.referenceCount.textContent = references.length;
 }
 
 function getVisiblePapers() {
@@ -798,6 +969,7 @@ function filterRows(rows, paperOrTitle, maybeSourceFile = "") {
       paper.year,
       paper.field,
       paper.overview,
+      referenceSearchText(paper),
       row.dimension,
       row.basis_type,
       row.summary,
@@ -855,7 +1027,8 @@ function renderCards(papers) {
     const footer = document.createElement("div");
     footer.className = "paper-card-foot";
     const count = document.createElement("span");
-    count.textContent = `${paper.rows.length} 点 · 滚动/点击`;
+    const referenceCount = paperReferences(paper).length;
+    count.textContent = referenceCount ? `${paper.rows.length} 点 · ${referenceCount} 篇引用` : `${paper.rows.length} 点 · 滚动/点击`;
     const deleteButton = button("删", "tiny-button");
     deleteButton.title = "从浏览器本地库删除这篇文献";
     deleteButton.addEventListener("click", (event) => {
@@ -895,6 +1068,7 @@ function openDetail(id) {
   const paper = library.find((item) => item.id === id);
   if (!paper) return;
   const rows = filterRows(paper.rows, paper);
+  const references = paperReferences(paper);
 
   els.detailSource.textContent = paper.sourceFile;
   els.detailTitle.textContent = paper.title;
@@ -902,13 +1076,30 @@ function openDetail(id) {
   els.detailOverview.textContent = paper.overview || buildPaperBrief(paper.rows);
   els.detailOverview.style.display = els.detailOverview.textContent ? "block" : "none";
   els.detailRows.replaceChildren();
+  els.detailReferences.replaceChildren();
+  els.detailReferenceCount.textContent = references.length;
 
   for (const [dimension, groupRows] of groupRowsByDimension(rows)) {
     els.detailRows.append(renderDetailSection(dimension, groupRows));
   }
+  for (const group of paper.reference_groups || []) {
+    els.detailReferences.append(renderReferenceGroup(group));
+  }
+  els.referenceEmpty.style.display = paper.reference_groups?.length ? "none" : "block";
+  selectDetailTab("summary");
 
   els.detailPanel.classList.add("is-open");
   els.detailPanel.setAttribute("aria-hidden", "false");
+}
+
+function selectDetailTab(tab) {
+  const showReferences = tab === "references";
+  els.summaryTab.classList.toggle("is-active", !showReferences);
+  els.referencesTab.classList.toggle("is-active", showReferences);
+  els.summaryTab.setAttribute("aria-selected", String(!showReferences));
+  els.referencesTab.setAttribute("aria-selected", String(showReferences));
+  els.summaryPane.hidden = showReferences;
+  els.referencesPane.hidden = !showReferences;
 }
 
 function renderDetailSection(dimension, rows) {
@@ -959,6 +1150,105 @@ function renderDetailPoint(row) {
   }
 
   return wrapper;
+}
+
+function renderReferenceGroup(group) {
+  const section = document.createElement("section");
+  section.className = "reference-group";
+
+  const heading = document.createElement("div");
+  heading.className = "reference-group-head";
+  const title = document.createElement("h3");
+  title.textContent = group.direction || "待核查/方向不明";
+  heading.append(title, badge(`${group.references.length} 篇`));
+  section.append(heading);
+
+  if (group.summary) {
+    const summary = document.createElement("p");
+    summary.className = "reference-group-summary";
+    summary.textContent = group.summary;
+    section.append(summary);
+  }
+
+  if (group.references.length) {
+    const list = document.createElement("div");
+    list.className = "reference-list";
+    for (const reference of group.references) list.append(renderReferenceItem(reference));
+    section.append(list);
+  }
+  return section;
+}
+
+function renderReferenceItem(reference) {
+  const item = document.createElement("article");
+  item.className = "reference-item";
+  const title = document.createElement("p");
+  title.className = "reference-title";
+  const label = [reference.ref_id, reference.title || reference.citation || "题名待核查"].filter(Boolean).join(" ");
+  const targetUrl = referenceTargetUrl(reference);
+  if (targetUrl) {
+    const link = document.createElement("a");
+    link.href = targetUrl;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = label;
+    title.append(link);
+  } else {
+    title.textContent = label;
+  }
+  item.append(title);
+
+  const metaValues = [reference.authors, reference.year, reference.venue, reference.traceability].filter(Boolean);
+  if (metaValues.length) {
+    const meta = document.createElement("div");
+    meta.className = "reference-meta";
+    for (const value of metaValues) {
+      const span = document.createElement("span");
+      span.textContent = value;
+      meta.append(span);
+    }
+    item.append(meta);
+  }
+
+  if (reference.relation) {
+    const relation = document.createElement("p");
+    relation.className = "reference-relation";
+    relation.textContent = `与本文关系：${reference.relation}`;
+    item.append(relation);
+  }
+  if (reference.classification_basis) {
+    const basis = document.createElement("p");
+    basis.className = "reference-basis";
+    basis.textContent = `分类依据：${reference.classification_basis}`;
+    item.append(basis);
+  }
+  if (targetUrl) {
+    const link = document.createElement("a");
+    link.className = "reference-link";
+    link.href = targetUrl;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = reference.doi ? `DOI：${reference.doi}` : "打开文献链接";
+    item.append(link);
+  }
+  return item;
+}
+
+function referenceTargetUrl(reference) {
+  const value = cleanCell(reference.url || (reference.doi ? `https://doi.org/${reference.doi}` : ""));
+  return /^https?:\/\//i.test(value) ? value : "";
+}
+
+function paperReferences(paper) {
+  return (paper.reference_groups || []).flatMap((group) => group.references || []);
+}
+
+function referenceSearchText(paper) {
+  return (paper.reference_groups || []).flatMap((group) => [
+    group.direction,
+    group.summary,
+    ...(group.references || []).flatMap((reference) => Object.values(reference)),
+  ]).join(" ");
 }
 
 function groupRowsByDimension(rows) {
@@ -1052,12 +1342,15 @@ function cardBriefText(paper) {
 
 function paperDetailBadges(paper) {
   const badges = [];
+  const references = paperReferences(paper);
   if (paper.doi) badges.push(badge(`DOI ${shortText(paper.doi, 80)}`));
   if (paper.year && !String(paper.venue || "").includes(paper.year)) badges.push(badge(paper.year));
   if (paper.venue) badges.push(badge(shortText(paper.venue, 80)));
   if (paper.field) badges.push(badge(shortText(paper.field, 64)));
   if (paper.authors) badges.push(badge(shortText(paper.authors, 70)));
-  badges.push(badge(`${paper.rows.length} 行总结`), badge(`导入 ${formatDate(paper.importedAt)}`), ...typeBadges(paper.rows));
+  badges.push(badge(`${paper.rows.length} 行总结`));
+  if (references.length) badges.push(badge(`${paper.reference_groups.length} 个引用方向`), badge(`${references.length} 篇引用`));
+  badges.push(badge(`导入 ${formatDate(paper.importedAt)}`), ...typeBadges(paper.rows));
   return badges;
 }
 

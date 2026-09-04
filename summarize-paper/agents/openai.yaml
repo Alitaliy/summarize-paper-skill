@@ -1,4 +1,4 @@
 interface:
   display_name: "论文总结"
-  short_description: "Faithful paper summaries with Markdown and Excel outputs"
-  default_prompt: "Use $summarize-paper 按原文总结这篇论文，并输出 Markdown 和 Excel。"
+  short_description: "忠实总结论文，分类归并引用文献，并输出 Markdown、JSON 和 Excel"
+  default_prompt: "Use $summarize-paper 按原文总结这篇论文，归并引用文献方向，并输出 Markdown、JSON 和 Excel。"

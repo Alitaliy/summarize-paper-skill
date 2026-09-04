@@ -51,13 +51,17 @@
           <span>合理推测</span>
           <strong id="inferredCount">0</strong>
         </article>
+        <article class="stat-card accent-violet">
+          <span>引用文献</span>
+          <strong id="referenceCount">0</strong>
+        </article>
       </section>
 
       <section class="library-board" aria-label="文献缩略卡片墙">
         <section class="toolbar" aria-label="文献筛选">
           <div class="search-wrap">
             <label for="searchInput">搜索</label>
-            <input id="searchInput" type="search" placeholder="搜索标题、期刊、主题、总结" autocomplete="off" />
+            <input id="searchInput" type="search" placeholder="搜索标题、主题、总结、引用" autocomplete="off" />
           </div>
           <div class="select-wrap">
             <label for="dimensionFilter">维度</label>
@@ -116,8 +120,18 @@
           <button id="closeDetailButton" class="icon-button" aria-label="关闭详情">×</button>
         </div>
         <div id="detailMeta" class="detail-meta"></div>
-        <p id="detailOverview" class="detail-overview"></p>
-        <div id="detailRows" class="detail-rows"></div>
+        <div class="detail-tabs" role="tablist" aria-label="详情视图">
+          <button id="summaryTab" class="detail-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="summaryPane">论文总结</button>
+          <button id="referencesTab" class="detail-tab" type="button" role="tab" aria-selected="false" aria-controls="referencesPane">引用脉络 <span id="detailReferenceCount">0</span></button>
+        </div>
+        <section id="summaryPane" class="detail-pane" role="tabpanel" aria-labelledby="summaryTab">
+          <p id="detailOverview" class="detail-overview"></p>
+          <div id="detailRows" class="detail-rows"></div>
+        </section>
+        <section id="referencesPane" class="detail-pane" role="tabpanel" aria-labelledby="referencesTab" hidden>
+          <div id="detailReferences" class="reference-groups"></div>
+          <div id="referenceEmpty" class="reference-empty">这份总结还没有引用文献分类数据。</div>
+        </section>
       </div>
     </aside>
 
