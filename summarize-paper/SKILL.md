@@ -24,6 +24,8 @@ Use this skill to summarize one academic paper from the user-provided source. Ex
 - Build citation groups only from bibliographic entries and citation context present in the supplied paper. Never invent a reference title, author, venue, DOI, URL, or research direction.
 - Keep each legible bibliographic entry once under one primary research direction. When classification is uncertain, use `待核查/方向不明` and state why.
 - Preserve DOI and URL values exactly when present. A DOI may be converted into a resolver link such as `https://doi.org/<doi>`, but must not be guessed.
+- Citation classification is part of every full-paper summary, not an opt-in extra. Count the source bibliography before grouping it; report partial extraction or an unavailable bibliography explicitly.
+- Software, documentation, and websites in the bibliography remain traceable entries. Identify their actual role instead of describing them as research papers.
 
 ## Workflow
 
@@ -40,11 +42,11 @@ Use this skill to summarize one academic paper from the user-provided source. Ex
    - `未来前景/后续工作`
 6. For each dimension, include all material points explicitly present in the paper.
 7. Add cautious inferred items only after all original-content items, and label them clearly as `合理推测`.
-8. If a reference list is available, read [references/citation-map.md](references/citation-map.md), extract every legible bibliographic entry, and classify the entries into useful research directions.
-9. Produce the Markdown output first, grouping the claim list under dimension headings and citation entries under direction headings.
-10. Save the same structured content as JSON, including `reference_groups` even when it is empty.
-11. Create the Excel output using `scripts/write_paper_summary_excel.py` when file creation is available. The workbook contains `论文总结` and `引用文献脉络` worksheets.
-12. Archive the generated Markdown, JSON, and Excel files using `scripts/archive_summary_outputs.py` when file creation is available, so the literature management webpage can auto-discover the new paper. Prefer a local structure where one paper folder contains the source PDF/text extraction and the generated summary outputs; the webpage will only import summary output files.
+8. Read [references/citation-map.md](references/citation-map.md), inspect the bibliography and citation contexts, count the source entries, then extract and classify every legible entry. Use `reference_status`, `reference_count_expected`, and `reference_note` to record coverage, including when the bibliography is unavailable.
+9. Build one JSON record containing the paper metadata, `rows`, `reference_groups`, and coverage fields. Read [references/web-output-contract.md](references/web-output-contract.md) for the exact export and webpage contract.
+10. Run `python scripts/write_summary_outputs.py draft.json --output-dir "<one-paper-folder>"`. This validates the record, writes grouped Markdown, saves `summary.json`, and creates a two-sheet Excel workbook from the same data. Use the paper's source folder by default, or the user's selected output folder. Keep one paper per output folder.
+11. Check that the source bibliography count and citation contexts agree with the output. The script detects structural errors and count mismatches, but cannot establish whether a classification is faithful to the paper.
+12. The webpage can watch the output folder's parent directly. When a separate library inbox is used, archive the three generated files using `scripts/archive_summary_outputs.py`. Do not create a second archive merely to import files already inside the watched library.
 
 ## Markdown Output
 
@@ -89,13 +91,17 @@ Use this structure:
 
 ## 引用文献脉络
 
+- 整理状态：complete
+- 原文引用总数：<从原文参考文献表独立清点的条目数>
+- 整理说明：<缺页、无法辨认的编号或其他原文限制；完整时可留空>
+
 ### 大方向：<方向名称>
 
 - 方向概括：<说明这组文献共同研究什么，以及它们为何与本文相关。>
 
-| 引用编号 | 题名 | 作者 | 年份 | 来源 | DOI | 链接 | 与本文关系 | 分类依据 | 可追踪性 |
-|---|---|---|---|---|---|---|---|---|---|
-| [12] | ... | ... | ... | ... | 10.xxxx/... | https://doi.org/... | 方法基础/背景/对比/数据等 | 题名与正文引用位置 | 完整/部分/待核查 |
+| 引用编号 | 题名 | 作者 | 年份 | 来源 | DOI | 链接 | 与本文关系 | 分类依据 | 可追踪性 | 完整引文 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| [12] | ... | ... | ... | ... | 10.xxxx/... | https://doi.org/... | 方法基础/背景/对比/数据等 | 题名与正文引用位置 | 完整/部分/待核查 | 原文条目，可选 |
 
 ## 推测内容清单
 
@@ -145,8 +151,9 @@ Add a second worksheet named `引用文献脉络` with columns:
 - `与本文关系`
 - `分类依据`
 - `可追踪性`
+- `完整引文`
 
-Use `scripts/write_paper_summary_excel.py` to create the workbook from a JSON file:
+Prefer the unified exporter in the workflow. For an Excel-only regeneration or an older JSON record, the existing command remains available:
 
 ```bash
 python scripts/write_paper_summary_excel.py summary.json paper_summary.xlsx
@@ -162,6 +169,9 @@ Expected JSON shape:
   "year": "2026",
   "field": "Research field",
   "overview": "A short paper-level overview for the literature manager card.",
+  "reference_status": "complete",
+  "reference_count_expected": 1,
+  "reference_note": "",
   "reference_groups": [
     {
       "direction": "Research direction",
@@ -197,6 +207,8 @@ Expected JSON shape:
 
 Keep JSON and Excel rows as claim-level records, ordered by the six required dimensions. Keep `reference_groups` grouped by direction and references in bibliography order within each group. Include paper-level JSON metadata when available so the literature management webpage can render compact cards and a separate citation-map view.
 
+The abbreviated JSON above illustrates fields, not a complete six-dimension summary. The unified exporter checks all six dimensions. Use `partial` when only part of the bibliography can be recovered, or `unavailable` with `reference_groups: []` when it cannot be read. In both cases supply a source-specific `reference_note`. Do not label a selected subset of references as `complete`.
+
 ## Library Archive Output
 
 After creating Markdown, JSON, and Excel outputs, archive them for the dynamic literature management webpage:
@@ -230,5 +242,5 @@ Before finishing:
 - Confirm each citation direction and relationship is supported by the reference title, venue, or citation context rather than guessed from external knowledge.
 - Confirm DOI and URL fields are either copied from the paper or left blank, and that the Markdown, JSON, and Excel citation entries reconcile.
 - Confirm missing source information is marked as `未提及` instead of invented.
-- Confirm the generated files were archived for the literature management webpage when file creation is available.
-
+- Confirm all three formats contain the same reference labels, directions, relationships, and coverage status. No source label should appear in more than one direction.
+- Confirm the final `summary.json`, `paper_summary.md`, and `paper_summary.xlsx` are together in one paper folder that the webpage can discover. Do not leave the only JSON copy in a temporary directory.

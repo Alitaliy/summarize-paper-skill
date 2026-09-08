@@ -44,6 +44,7 @@ REFERENCE_HEADERS = [
     "与本文关系",
     "分类依据",
     "可追踪性",
+    "完整引文",
 ]
 
 REFERENCE_KEYS = [
@@ -59,6 +60,7 @@ REFERENCE_KEYS = [
     "relation",
     "classification_basis",
     "traceability",
+    "citation",
 ]
 
 
@@ -117,8 +119,8 @@ def worksheet_xml(title: str, rows: list[dict[str, object]]) -> str:
     <col min="6" max="6" width="32" customWidth="1"/>
   </cols>
   <sheetData>{''.join(xml_rows)}</sheetData>
-  <mergeCells count="1"><mergeCell ref="A1:F1"/></mergeCells>
   <autoFilter ref="A2:F{last_row}"/>
+  <mergeCells count="1"><mergeCell ref="A1:F1"/></mergeCells>
 </worksheet>'''
 
 
@@ -147,7 +149,7 @@ def flatten_reference_rows(data: dict[str, object]) -> list[dict[str, object]]:
                     "direction": direction,
                     "direction_summary": direction_summary,
                     "ref_id": reference.get("ref_id") or reference.get("label") or reference.get("number") or "",
-                    "title": reference.get("title") or reference.get("citation") or "",
+                    "title": reference.get("title") or "",
                     "authors": reference.get("authors") or reference.get("author") or "",
                     "year": reference.get("year") or "",
                     "venue": reference.get("venue") or reference.get("source") or "",
@@ -156,39 +158,46 @@ def flatten_reference_rows(data: dict[str, object]) -> list[dict[str, object]]:
                     "relation": reference.get("relation") or "",
                     "classification_basis": reference.get("classification_basis") or reference.get("basis") or "",
                     "traceability": reference.get("traceability") or "",
+                    "citation": reference.get("citation") or "",
                 }
             )
     return output
 
 
-def reference_worksheet_xml(title: str, rows: list[dict[str, object]]) -> str:
+def reference_worksheet_xml(title: str, rows: list[dict[str, object]], data: dict[str, object]) -> str:
     xml_rows = [
         '<row r="1" ht="24" customHeight="1">'
         + inline_cell(1, 1, f"引用文献脉络：{title}", 1)
         + "</row>",
         '<row r="2">'
-        + "".join(inline_cell(2, idx + 1, header, 2) for idx, header in enumerate(REFERENCE_HEADERS))
+        + "".join(inline_cell(2, idx + 1, value) for idx, value in enumerate([
+            "整理状态", data.get("reference_status", ""), "原文引用总数", data.get("reference_count_expected"),
+            "整理说明", data.get("reference_note", ""),
+        ]))
+        + "</row>",
+        '<row r="3">'
+        + "".join(inline_cell(3, idx + 1, header, 2) for idx, header in enumerate(REFERENCE_HEADERS))
         + "</row>",
     ]
 
-    for row_idx, item in enumerate(rows, start=3):
+    for row_idx, item in enumerate(rows, start=4):
         cells = [inline_cell(row_idx, col_idx, item.get(key, ""), None) for col_idx, key in enumerate(REFERENCE_KEYS, start=1)]
         xml_rows.append(f'<row r="{row_idx}">' + "".join(cells) + "</row>")
 
-    widths = [22, 38, 12, 48, 28, 10, 28, 24, 36, 28, 34, 12]
+    widths = [22, 38, 12, 48, 28, 10, 28, 24, 36, 28, 34, 12, 60]
     columns = "".join(
         f'<col min="{idx}" max="{idx}" width="{width}" customWidth="1"/>'
         for idx, width in enumerate(widths, start=1)
     )
-    last_row = max(len(rows) + 2, 2)
+    last_row = max(len(rows) + 3, 3)
     return f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-  <sheetViews><sheetView workbookViewId="0"><pane ySplit="2" topLeftCell="A3" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+  <sheetViews><sheetView workbookViewId="0"><pane ySplit="3" topLeftCell="A4" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
   <cols>{columns}</cols>
   <sheetData>{''.join(xml_rows)}</sheetData>
-  <mergeCells count="1"><mergeCell ref="A1:L1"/></mergeCells>
-  <autoFilter ref="A2:L{last_row}"/>
+  <autoFilter ref="A3:M{last_row}"/>
+  <mergeCells count="2"><mergeCell ref="A1:M1"/><mergeCell ref="F2:M2"/></mergeCells>
 </worksheet>'''
 
 
@@ -236,7 +245,7 @@ def write_xlsx(data: dict[str, object], output_path: Path) -> None:
   <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>''',
         "xl/worksheets/sheet1.xml": worksheet_xml(title, rows),
-        "xl/worksheets/sheet2.xml": reference_worksheet_xml(title, reference_rows),
+        "xl/worksheets/sheet2.xml": reference_worksheet_xml(title, reference_rows, data),
         "xl/styles.xml": '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <fonts count="3">

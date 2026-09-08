@@ -1,6 +1,6 @@
 # summarize-paper 论文总结 Skill
 
-`summarize-paper` 是一个用于学术论文总结的 Codex Skill。它会基于用户提供的一篇论文生成忠实、可追溯的中文总结，并在环境允许时同时输出 Markdown 文档和 Excel 工作簿。
+`summarize-paper` 是一个用于学术论文总结的 Codex Skill。它会基于用户提供的一篇论文生成忠实、可追溯的中文总结，按研究方向分类其引用文献，并从同一份结构化数据生成 Markdown、JSON 和 Excel。
 
 本仓库同时提供一个在线文献管理页面，用来管理这个 skill 生成的总结数据。页面支持手动导入，也支持选择一个输出目录后自动轮询刷新；导入后的文献库保存在浏览器本地。
 
@@ -84,6 +84,7 @@ $env:SUMMARIZE_PAPER_LIBRARY_DIR = "C:\Users\你的用户名\Desktop\project\sum
 - Markdown 会按维度大类聚合为小点列表；JSON 与 Excel 保留 claim-level 行记录，便于网页分组展示和证据追踪。
 - 参考文献会按研究大方向归并；每条文献只进入一个主要方向，并保留可追踪字段和分类依据。
 - Excel 包含 `论文总结` 与 `引用文献脉络` 两个工作表，网页可从 JSON、Markdown 或 Excel 恢复引用分类。
+- 统一导出会核对原文引用总数、重复编号和分类依据；网页显示完整、部分可读或未提供参考文献的状态。字段缺损的条目可以保留完整引文，便于后续核查。
 
 ## 仓库结构
 
@@ -101,9 +102,11 @@ summarize-paper-skill/
     |-- agents/
     |   `-- openai.yaml
     |-- references/
-    |   `-- citation-map.md
+    |   |-- citation-map.md
+    |   `-- web-output-contract.md
     `-- scripts/
         |-- archive_summary_outputs.py
+        |-- write_summary_outputs.py
         `-- write_paper_summary_excel.py
 ```
 
@@ -129,6 +132,8 @@ Copy-Item -Recurse -Force ".\summarize-paper-skill\summarize-paper" "$env:USERPR
 
 如果你设置了 `CODEX_HOME`，请复制到 `$CODEX_HOME/skills`，而不是默认的 `~/.codex/skills`。
 
+升级已有安装时，先更新仓库，再重新复制整个 `summarize-paper` 文件夹。仅更新网页或仓库，不会自动更新已安装到本机的 skill；只替换 `SKILL.md` 也会漏掉导出脚本和格式说明。新版入口包含 `write_summary_outputs.py`，安装后可在本机 skill 的 `scripts/` 下确认。
+
 ## 使用 Skill
 
 在 Codex 中显式调用：
@@ -149,7 +154,29 @@ Use $summarize-paper to summarize this paper and output Markdown and Excel.
 请使用 summarize-paper skill，总结这篇 PDF，并生成 Markdown 和 Excel 两份结果。
 ```
 
-## Excel 生成脚本
+## 统一生成三种输出
+
+完成原文阅读和引用分类后，把论文元数据、六个维度的总结条目、`reference_groups` 和引用覆盖字段写入同一份 JSON，再运行：
+
+```bash
+python summarize-paper/scripts/write_summary_outputs.py draft.json --output-dir "paper/Author - Year - Title"
+```
+
+该命令只需 Python 标准库，生成 `paper_summary.md`、`summary.json`、`paper_summary.xlsx`。JSON 是网页监听时优先读取的来源；三份文件放在同一篇论文的文件夹中。修改引用分类后用相同输入重新生成三份输出，避免旧 JSON 遮住新 Excel 的引用信息。
+
+引用覆盖使用三个字段：
+
+| 字段 | 含义 |
+|---|---|
+| `reference_status` | `complete` 表示全部原文条目均已整理，`partial` 表示只能读取部分，`unavailable` 表示未提供可读参考文献。 |
+| `reference_count_expected` | 从原文参考文献表独立清点的总数；不确定时用 `null`。完整状态必须填入并核对总数。 |
+| `reference_note` | 缺页、无法辨认的编号或其他整理限制；部分或不可读时必须说明。 |
+
+统一导出在写入前检查重复引用编号、数量不一致、缺少分类依据等问题。研究方向及引用关系仍需由阅读原文的人或智能体判断。文中的软件、协议文档和网页引用也保留，并明确其资源性质。
+
+完整格式见 [引用分类说明](summarize-paper/references/citation-map.md) 和 [网页接入约定](summarize-paper/references/web-output-contract.md)。以下 JSON 是字段片段；实际统一导出输入应覆盖全部六个总结维度。
+
+## 单独生成 Excel
 
 仓库内置脚本可以从 JSON 文件生成 `.xlsx` 工作簿：
 
@@ -167,6 +194,9 @@ JSON 输入格式：
   "year": "2026",
   "field": "Research field",
   "overview": "A short paper-level overview for the card and detail header.",
+  "reference_status": "complete",
+  "reference_count_expected": 1,
+  "reference_note": "",
   "reference_groups": [
     {
       "direction": "Research direction",
@@ -223,7 +253,18 @@ python summarize-paper/scripts/archive_summary_outputs.py summary.json paper_sum
 - `置信度`
 - `后期核查建议`
 
-新版 Excel 还会生成 `引用文献脉络` 工作表，列名为：`大方向`、`方向概括`、`引用编号`、`题名`、`作者`、`年份`、`来源`、`DOI`、`链接`、`与本文关系`、`分类依据`、`可追踪性`。
+新版 Excel 还会生成 `引用文献脉络` 工作表，列名为：`大方向`、`方向概括`、`引用编号`、`题名`、`作者`、`年份`、`来源`、`DOI`、`链接`、`与本文关系`、`分类依据`、`可追踪性`、`完整引文`。第二行记录整理状态、原文引用总数和说明，第三行是引用表头。网页会自动寻找表头，因此仍可读取旧版工作簿。
+
+## 验证开发改动
+
+需要 Python 3.10+ 和 Node.js，无需安装 Python 或 npm 第三方测试依赖：
+
+```bash
+python -m unittest discover -s tests -v
+node --check docs/app.js
+```
+
+测试用合成条目生成三种格式，并通过网页实际使用的解析函数核对总结、引用分组和整理状态。Excel 测试独立解析生成文件的单元格后交给网页读取逻辑，不依赖在线 CDN。GitHub Actions 在提交和拉取请求时运行同样的检查。
 
 ## 质量检查要求
 

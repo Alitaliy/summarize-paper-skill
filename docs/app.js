@@ -28,6 +28,7 @@ const REFERENCE_HEADER_MAP = new Map([
   ["与本文关系", "relation"],
   ["分类依据", "classification_basis"],
   ["可追踪性", "traceability"],
+  ["完整引文", "citation"],
 ]);
 const SUPPORTED_FILE_RE = /\.(xlsx|xls|json|md|markdown)$/i;
 const WATCH_OUTPUT_FILE_RE = /(^|\/)(summary|paper_summary|[^/]+_paper_summary)\.(xlsx|xls|json|md|markdown)$/i;
@@ -97,6 +98,7 @@ function bindElements() {
     detailReferences: document.querySelector("#detailReferences"),
     detailReferenceCount: document.querySelector("#detailReferenceCount"),
     referenceEmpty: document.querySelector("#referenceEmpty"),
+    referenceNote: document.querySelector("#referenceNote"),
     closeDetailButton: document.querySelector("#closeDetailButton"),
     pasteDialog: document.querySelector("#pasteDialog"),
     pasteText: document.querySelector("#pasteText"),
@@ -490,7 +492,16 @@ async function parseWorkbook(file, sourcePath) {
   const rows = matrix.slice(headerIndex + 1).map((line) => rowFromHeaders(headers, line)).filter((row) => row.summary || row.dimension);
   if (!rows.length) throw new Error("没有读到总结行");
   const referenceGroups = parseWorkbookReferenceGroups(workbook);
-  return normalizePaper({ title, rows, reference_groups: referenceGroups, sourceFile: sourcePath });
+  return normalizePaper({ title, rows, reference_groups: referenceGroups, ...parseWorkbookReferenceMetadata(workbook), sourceFile: sourcePath });
+}
+
+function parseWorkbookReferenceMetadata(workbook) {
+  const sheetName = workbook.SheetNames.find((name) => name.includes("引用文献脉络"));
+  if (!sheetName) return {};
+  const matrix = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: "" });
+  const row = matrix.find((line) => cleanCell(line[0]) === "整理状态");
+  if (!row) return {};
+  return { reference_status: cleanCell(row[1]), reference_count_expected: row[3], reference_note: cleanCell(row[5]) };
 }
 
 function rowFromHeaders(headers, values) {
@@ -548,7 +559,14 @@ function parseMarkdownMetadata(text, sourceFile = "summary.md") {
     integrity: basicInfo["资料完整性说明"],
     overview,
     reference_groups: referenceGroups,
+    ...parseReferenceMetadataFromMarkdown(text),
   };
+}
+
+function parseReferenceMetadataFromMarkdown(text) {
+  const block = extractSection(text, "引用文献脉络");
+  const read = (label) => block.match(new RegExp(`^[-*][\\t ]*${label}[：:][\\t ]*(.*)$`, "m"))?.[1]?.trim() || "";
+  return { reference_status: read("整理状态"), reference_note: read("整理说明"), reference_count_expected: read("原文引用总数") };
 }
 
 function parseBasicInfoBlock(text) {
@@ -606,6 +624,11 @@ function parseGroupedMarkdown(text) {
   const rows = [];
   let dimension = "";
   for (const line of block.split(/\r?\n/)) {
+    const review = line.match(/^\s+[-*]\s+核查建议[：:]\s*(.+)$/);
+    if (review && rows.length) {
+      rows[rows.length - 1].review_suggestion = review[1].trim();
+      continue;
+    }
     const heading = line.match(/^###\s+(.+)/);
     if (heading) {
       dimension = heading[1].trim();
@@ -637,7 +660,7 @@ function parseMarkdownTable(text) {
     .filter((line) => line.trim().startsWith("|") && !/^\|\s*-+/.test(line) && !/^\|\s*维度\s*\|/.test(line))
     .map(splitMarkdownRow)
     .filter((cells) => cells.length >= 4)
-    .map((cells) => ({ dimension: cells[0], basis_type: cells[1], summary: cells[2], evidence: cells[3], confidence: "", review_suggestion: "" }));
+    .map((cells) => ({ dimension: cells[0], basis_type: cells[1], summary: cells[2], evidence: cells[3], confidence: cells[4] || "", review_suggestion: cells[5] || "" }));
 }
 
 function splitMarkdownRow(line) {
@@ -751,6 +774,18 @@ function normalizePaper(input) {
     updatedAt: input.updatedAt || new Date().toISOString(),
     rows,
     reference_groups: referenceGroups,
+    ...normalizeReferenceMetadata(input),
+  };
+}
+
+function normalizeReferenceMetadata(input) {
+  const status = ["complete", "partial", "unavailable"].includes(input.reference_status) ? input.reference_status : "";
+  const value = input.reference_count_expected;
+  const count = value !== null && value !== undefined && String(value).trim() !== "" ? Number(value) : NaN;
+  return {
+    reference_status: status,
+    reference_note: cleanCell(input.reference_note),
+    reference_count_expected: Number.isInteger(count) && count >= 0 ? count : null,
   };
 }
 
@@ -765,6 +800,7 @@ function hasPaperMetadata(metadata) {
   return Boolean(metadata && (
     metadata.authors || metadata.venue || metadata.doi || metadata.year || metadata.field || metadata.overview || metadata.integrity
     || normalizeReferenceGroups(metadata.reference_groups || []).length
+    || metadata.reference_status || metadata.reference_note
   ));
 }
 
@@ -779,7 +815,8 @@ function mergePaperMetadata(paper, metadata) {
     field: paper.field || metadata.field || "",
     integrity: paper.integrity || metadata.integrity || "",
     overview: paper.overview || metadata.overview || "",
-    reference_groups: paper.reference_groups?.length ? paper.reference_groups : normalizeReferenceGroups(metadata.reference_groups || []),
+    reference_groups: paper.reference_status || paper.reference_groups?.length ? (paper.reference_groups || []) : normalizeReferenceGroups(metadata.reference_groups || []),
+    ...normalizeReferenceMetadata(paper.reference_status ? paper : metadata),
   };
 }
 
@@ -870,7 +907,8 @@ function mergePapers(papers, sourceLabel, options = {}) {
         field: paper.field || existing.field || "",
         integrity: paper.integrity || existing.integrity || "",
         overview: paper.overview || existing.overview || "",
-        reference_groups: paper.reference_groups?.length ? paper.reference_groups : (existing.reference_groups || []),
+        reference_groups: paper.reference_status || paper.reference_groups?.length ? (paper.reference_groups || []) : (existing.reference_groups || []),
+        ...normalizeReferenceMetadata(paper.reference_status ? paper : existing),
         sourceFile: mergeSourceNames(existing.sourceFile, paper.sourceFile),
       };
       updated += 1;
@@ -897,12 +935,20 @@ function applyPaperMetadataUpdate(existing, incoming) {
       changed = true;
     }
   }
-  if (incoming.reference_groups?.length) {
+  if (incoming.reference_status || incoming.reference_groups?.length) {
     const current = JSON.stringify(existing.reference_groups || []);
-    const next = JSON.stringify(incoming.reference_groups);
+    const next = JSON.stringify(incoming.reference_groups || []);
     if (current !== next) {
-      existing.reference_groups = incoming.reference_groups;
+      existing.reference_groups = incoming.reference_groups || [];
       changed = true;
+    }
+  }
+  if (incoming.reference_status) {
+    for (const [key, value] of Object.entries(normalizeReferenceMetadata(incoming))) {
+      if (existing[key] !== value) {
+        existing[key] = value;
+        changed = true;
+      }
     }
   }
   if (incoming.sourceFile) {
@@ -1078,6 +1124,8 @@ function openDetail(id) {
   els.detailRows.replaceChildren();
   els.detailReferences.replaceChildren();
   els.detailReferenceCount.textContent = references.length;
+  els.referenceNote.textContent = referenceStatusText(paper);
+  els.referenceNote.hidden = !els.referenceNote.textContent;
 
   for (const [dimension, groupRows] of groupRowsByDimension(rows)) {
     els.detailRows.append(renderDetailSection(dimension, groupRows));
@@ -1090,6 +1138,16 @@ function openDetail(id) {
 
   els.detailPanel.classList.add("is-open");
   els.detailPanel.setAttribute("aria-hidden", "false");
+}
+
+function referenceStatusText(paper) {
+  const labels = { complete: "引用已完整整理", partial: "参考文献仅部分可读", unavailable: "未提供可读参考文献" };
+  const label = labels[paper.reference_status];
+  if (!label) return paper.reference_note || "";
+  const count = paperReferences(paper).length;
+  const expected = paper.reference_count_expected;
+  const coverage = expected !== null && expected !== undefined ? `已整理 ${count} / ${expected} 条` : `已整理 ${count} 条`;
+  return [label, coverage, paper.reference_note].filter(Boolean).join("；");
 }
 
 function selectDetailTab(tab) {
