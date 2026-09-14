@@ -1050,7 +1050,13 @@ function renderCards(papers) {
       openDetail(paper.id);
     });
 
+    const cardHead = document.createElement("div");
+    cardHead.className = "paper-card-head";
+    const accent = document.createElement("span");
+    accent.className = "paper-card-accent";
+    accent.setAttribute("aria-hidden", "true");
     const starButton = createStarButton(paper);
+    cardHead.append(accent, starButton);
 
     const title = document.createElement("h3");
     title.className = "paper-card-title";
@@ -1092,7 +1098,7 @@ function renderCards(papers) {
     });
     footer.append(count, deleteButton);
 
-    card.append(starButton, body, footer);
+    card.append(cardHead, body, footer);
     els.paperGrid.append(card);
   }
 }

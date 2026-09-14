@@ -112,4 +112,8 @@ sandbox.testExisting = importedStar;
 vm.runInContext('library = [testExisting]; render = () => {};', sandbox);
 api.mergePapers([replacement], 'test', { quietWhenNoChange: true });
 assert.equal(vm.runInContext('library[0].starred', sandbox), true, 'A local star must survive a same-title re-import');
+const css = fs.readFileSync(path.join(__dirname, '../docs/styles.css'), 'utf8');
+const starStyles = css.match(/\.star-button\s*\{([^}]*)\}/)?.[1] || '';
+assert.match(starStyles, /border:\s*0;/, 'The star must not have a surrounding border');
+assert.match(starStyles, /background:\s*transparent;/, 'The star must not have a surrounding fill');
 console.log('Web readers preserve claims, citation groups, coverage, and update behavior.');
