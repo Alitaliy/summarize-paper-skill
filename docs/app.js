@@ -762,6 +762,7 @@ function normalizePaper(input) {
     id: input.id || `paper-${hashString(title)}`,
     fingerprint,
     title,
+    starred: input.starred === true,
     authors: cleanCell(input.authors || input.author || input["作者"]),
     venue,
     doi,
@@ -900,6 +901,7 @@ function mergePapers(papers, sourceLabel, options = {}) {
         ...paper,
         id: existing.id,
         importedAt: existing.importedAt,
+        starred: Boolean(existing.starred || paper.starred),
         authors: paper.authors || existing.authors || "",
         venue: paper.venue || existing.venue || "",
         doi: paper.doi || existing.doi || "",
@@ -929,6 +931,10 @@ function mergePapers(papers, sourceLabel, options = {}) {
 
 function applyPaperMetadataUpdate(existing, incoming) {
   let changed = false;
+  if (incoming.starred && !existing.starred) {
+    existing.starred = true;
+    changed = true;
+  }
   for (const key of ["authors", "venue", "doi", "year", "field", "integrity", "overview"]) {
     if (!existing[key] && incoming[key]) {
       existing[key] = incoming[key];
@@ -1038,10 +1044,13 @@ function renderCards(papers) {
     card.setAttribute("aria-label", `打开论文详情：${paper.title}`);
     card.addEventListener("click", () => openDetail(paper.id));
     card.addEventListener("keydown", (event) => {
+      if (event.target !== card) return;
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       openDetail(paper.id);
     });
+
+    const starButton = createStarButton(paper);
 
     const title = document.createElement("h3");
     title.className = "paper-card-title";
@@ -1083,9 +1092,39 @@ function renderCards(papers) {
     });
     footer.append(count, deleteButton);
 
-    card.append(body, footer);
+    card.append(starButton, body, footer);
     els.paperGrid.append(card);
   }
+}
+
+function createStarButton(paper) {
+  const starButton = document.createElement("button");
+  starButton.type = "button";
+  starButton.className = "star-button";
+  syncStarButton(starButton, paper);
+  starButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    togglePaperStar(paper);
+    syncStarButton(starButton, paper);
+    saveLibrary();
+    toast(paper.starred ? "已标记为重点" : "已取消重点标记");
+  });
+  return starButton;
+}
+
+function togglePaperStar(paper) {
+  if (!paper) return false;
+  paper.starred = !Boolean(paper.starred);
+  return paper.starred;
+}
+
+function syncStarButton(starButton, paper) {
+  const starred = Boolean(paper.starred);
+  starButton.textContent = starred ? "★" : "☆";
+  starButton.classList.toggle("is-starred", starred);
+  starButton.setAttribute("aria-pressed", String(starred));
+  starButton.setAttribute("aria-label", `${starred ? "取消重点标记" : "标记为重点"}：${paper.title}`);
+  starButton.title = starred ? "取消重点标记" : "标记为重点";
 }
 
 function renderDimensionSummary(dimension, rows) {

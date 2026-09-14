@@ -4,12 +4,39 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const dir = process.argv[2];
-const sandbox = { document: { addEventListener() {} }, window: { XLSX: { utils: { sheet_to_json: sheet => sheet } } } };
+class FakeElement {
+  constructor(tagName) {
+    this.tagName = tagName;
+    this.className = '';
+    this.attributes = {};
+    this.listeners = {};
+    this.classList = {
+      toggle: (name, enabled) => {
+        const names = new Set(this.className.split(/\s+/).filter(Boolean));
+        enabled ? names.add(name) : names.delete(name);
+        this.className = [...names].join(' ');
+      },
+    };
+  }
+  setAttribute(name, value) { this.attributes[name] = String(value); }
+  addEventListener(type, listener) { this.listeners[type] = listener; }
+  click() {
+    let stopped = false;
+    this.listeners.click({ stopPropagation() { stopped = true; } });
+    return stopped;
+  }
+}
+const sandbox = {
+  document: { addEventListener() {}, createElement: tagName => new FakeElement(tagName) },
+  window: { XLSX: { utils: { sheet_to_json: sheet => sheet } } },
+  localStorage: { setItem() {}, getItem() { return null; } },
+};
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/app.js'), 'utf8'), sandbox);
 const api = vm.runInContext(`({normalizeJsonPayload, parseMarkdown, parseWorkbookReferenceGroups,
   parseWorkbookReferenceMetadata, normalizeReferenceMetadata, rowFromHeaders, applyPaperMetadataUpdate,
-  referenceStatusText, selectPreferredSummaryFiles, mergePaperMetadata})`, sandbox);
+  referenceStatusText, selectPreferredSummaryFiles, mergePaperMetadata, normalizePaper,
+  createStarButton, togglePaperStar, mergePapers})`, sandbox);
 const plain = value => JSON.parse(JSON.stringify(value));
 const input = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8'));
 const expected = api.normalizeJsonPayload(input)[0];
@@ -50,4 +77,39 @@ assert.equal(api.mergePaperMetadata(unavailable, expected).reference_groups.leng
 const selected = api.selectPreferredSummaryFiles(['paper_summary.md', 'paper_summary.xlsx', 'summary.json'].map(name => ({path:`paper/test/${name}`, file:{lastModified:1}})));
 assert.equal(selected.length, 1);
 assert.ok(selected[0].path.endsWith('/summary.json'));
+
+// Card stars are accessible, reversible, and persisted as part of the normalized paper record.
+const starredPaper = api.normalizePaper({ ...input, starred: true });
+assert.equal(starredPaper.starred, true);
+const unstarredPaper = api.normalizePaper({ ...input, paper_title: `${input.paper_title} 2` });
+assert.equal(unstarredPaper.starred, false);
+sandbox.testSaveCalls = 0;
+sandbox.testToast = '';
+vm.runInContext('saveLibrary = () => { testSaveCalls += 1; }; toast = message => { testToast = message; };', sandbox);
+const starButton = api.createStarButton(unstarredPaper);
+assert.equal(starButton.textContent, '☆');
+assert.equal(starButton.attributes['aria-pressed'], 'false');
+assert.equal(starButton.click(), true, 'Star clicks must not open the paper card');
+assert.equal(unstarredPaper.starred, true);
+assert.equal(starButton.textContent, '★');
+assert.ok(starButton.className.includes('is-starred'));
+assert.equal(starButton.attributes['aria-pressed'], 'true');
+assert.equal(starButton.click(), true);
+assert.equal(unstarredPaper.starred, false);
+assert.equal(sandbox.testSaveCalls, 2);
+assert.equal(api.togglePaperStar(unstarredPaper), true);
+
+const importedStar = api.normalizePaper({ ...input, starred: true });
+const existingCopy = api.normalizePaper({ ...input });
+assert.equal(api.applyPaperMetadataUpdate(existingCopy, importedStar), true);
+assert.equal(existingCopy.starred, true, 'An imported star must survive a same-fingerprint refresh');
+const replacement = api.normalizePaper({
+  ...input,
+  starred: false,
+  rows: input.rows.map((row, index) => index ? row : { ...row, summary: `${row.summary} updated` }),
+});
+sandbox.testExisting = importedStar;
+vm.runInContext('library = [testExisting]; render = () => {};', sandbox);
+api.mergePapers([replacement], 'test', { quietWhenNoChange: true });
+assert.equal(vm.runInContext('library[0].starred', sandbox), true, 'A local star must survive a same-title re-import');
 console.log('Web readers preserve claims, citation groups, coverage, and update behavior.');

@@ -423,8 +423,47 @@ textarea:focus {
 
 .paper-card-title {
   min-height: 0;
+  padding-right: 28px;
   font-size: 12.5px;
   line-height: 1.35;
+}
+
+.star-button {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #c8d0d4;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.96);
+  color: #7a848a;
+  box-shadow: 0 2px 0 rgba(23, 23, 23, 0.08);
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  transition: color 140ms ease, background 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+
+.star-button:hover {
+  border-color: var(--gold);
+  color: var(--gold);
+  transform: scale(1.06);
+}
+
+.star-button:focus-visible {
+  outline: 3px solid rgba(177, 120, 0, 0.28);
+  outline-offset: -1px;
+}
+
+.star-button.is-starred {
+  border-color: var(--gold);
+  background: var(--gold-soft);
+  color: var(--gold);
 }
 
 .paper-card-venue,
