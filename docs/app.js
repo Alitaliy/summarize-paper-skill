@@ -56,6 +56,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   hydrateFilters();
   loadLibrary();
   bindEvents();
+  window.CitationAnalytics?.init({
+    getLibrary: () => library,
+    openPaper: (id) => openDetail(id, { ignoreFilters: true }),
+    notify: toast,
+  });
+  window.addEventListener("storage", (event) => {
+    if (event.key === STORAGE_KEY || event.key === null) { loadLibrary(); render(); }
+  });
   render();
   await restoreWatchedDirectory();
 });
@@ -190,7 +198,9 @@ function bindEvents() {
   els.pasteImportButton.addEventListener("click", async (event) => {
     event.preventDefault();
     try {
-      const papers = normalizeJsonPayload(JSON.parse(els.pasteText.value), "粘贴 JSON");
+      const payload = JSON.parse(els.pasteText.value);
+      const papers = normalizeJsonPayload(payload, "粘贴 JSON");
+      window.CitationAnalytics?.importSettings(payload.analysis_settings);
       mergePapers(papers, "粘贴 JSON", { forceToast: true });
       els.pasteDialog.close();
     } catch (error) {
@@ -456,7 +466,12 @@ async function importFiles(files, sourceLabel) {
 
 async function parseFile(file, sourcePath = file.name) {
   const name = sourcePath.toLowerCase();
-  if (name.endsWith(".json")) return normalizeJsonPayload(JSON.parse(await file.text()), sourcePath);
+  if (name.endsWith(".json")) {
+    const payload = JSON.parse(await file.text());
+    const papers = normalizeJsonPayload(payload, sourcePath);
+    window.CitationAnalytics?.importSettings(payload.analysis_settings);
+    return papers;
+  }
   if (name.endsWith(".md") || name.endsWith(".markdown")) return [parseMarkdown(await file.text(), sourcePath)];
   if (name.endsWith(".xlsx") || name.endsWith(".xls")) return [await parseWorkbook(file, sourcePath)];
   throw new Error("仅支持 .xlsx、.xls、.json、.md");
@@ -984,6 +999,7 @@ function render() {
   renderCards(visible);
   els.emptyState.style.display = library.length ? "none" : "block";
   els.resultSummary.textContent = library.length ? `显示 ${visible.length} / ${library.length} 篇文献` : "暂无文献";
+  window.CitationAnalytics?.refresh();
 }
 
 function renderStats() {
@@ -1162,10 +1178,10 @@ function renderDimensionSummary(dimension, rows) {
   return item;
 }
 
-function openDetail(id) {
+function openDetail(id, { ignoreFilters = false } = {}) {
   const paper = library.find((item) => item.id === id);
   if (!paper) return;
-  const rows = filterRows(paper.rows, paper);
+  const rows = ignoreFilters ? paper.rows : filterRows(paper.rows, paper);
   const references = paperReferences(paper);
 
   els.detailSource.textContent = paper.sourceFile;
@@ -1388,7 +1404,9 @@ function deletePaper(id) {
 }
 
 function exportLibrary() {
-  const data = JSON.stringify({ exportedAt: new Date().toISOString(), papers: library }, null, 2);
+  const data = JSON.stringify({ exportedAt: new Date().toISOString(), papers: library,
+    analysis_settings: window.CitationAnalytics?.getSettings(),
+  }, null, 2);
   const blob = new Blob([data], { type: "application/json;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");

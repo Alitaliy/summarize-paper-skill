@@ -5,9 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>论文总结管理器</title>
     <meta name="theme-color" content="#142d36" />
-    <link rel="stylesheet" href="./styles.css?v=20260914-workspace" />
+    <link rel="stylesheet" href="./styles.css?v=20260914-analytics" />
+    <link rel="stylesheet" href="./analytics.css?v=20260914-analytics" />
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-    <script src="./app.js?v=20260914-star-3" defer></script>
+    <script src="./citation-index.js?v=20260914-analytics" defer></script>
+    <script src="./analytics.js?v=20260914-analytics" defer></script>
+    <script src="./app.js?v=20260914-analytics" defer></script>
   </head>
   <body>
     <header class="app-header">
@@ -31,6 +34,11 @@
     </header>
 
     <main class="app-shell">
+      <nav class="page-nav" aria-label="页面导航">
+        <a href="#/library" id="libraryNav" aria-current="page">文献库</a>
+        <a href="#/citations" id="citationsNav">全局引用分析 <span aria-hidden="true">↗</span></a>
+      </nav>
+      <div id="libraryView">
       <section id="watchPanel" class="watch-panel">
         <div class="watch-copy">
           <strong id="watchTitle">未监听输出目录</strong>
@@ -116,6 +124,41 @@
         <div>
           <strong>拖入 summarize-paper 输出文件</strong>
           <span>支持 Excel、JSON、Markdown；数据保存在当前浏览器</span>
+        </div>
+      </section>
+      </div>
+      <section id="citationsView" class="analytics-view" hidden aria-labelledby="analyticsTitle">
+        <div class="analysis-heading">
+          <div><p class="eyebrow">Citation insights</p><h2 id="analyticsTitle">全局引用分析</h2></div>
+          <p>一篇来源论文引用同一文献，只计一次。</p>
+        </div>
+        <div id="analysisStats" class="analysis-stats"></div>
+        <p id="analysisCoverage" class="analysis-note"></p>
+        <div class="analysis-toolbar">
+          <div class="search-wrap"><label for="citationQuery">查找被引文献</label><input id="citationQuery" type="search" placeholder="题名、作者、DOI" autocomplete="off" /></div>
+          <div class="select-wrap"><label for="citationDirection">研究方向</label><select id="citationDirection"><option value="">全部方向</option></select></div>
+          <div class="select-wrap"><label for="citationLimit">排行显示</label><select id="citationLimit"><option value="20">前 20 篇</option><option value="50">前 50 篇</option><option value="0">全部文献</option></select></div>
+          <button id="citationReset" class="button" type="button">重置筛选</button>
+        </div>
+        <div class="analysis-layout">
+          <div class="analysis-main">
+            <section class="analysis-panel" aria-labelledby="rankingTitle">
+              <div class="analysis-panel-head"><h3 id="rankingTitle">库内被引排行</h3><span id="rankingCount"></span></div>
+              <p id="rankingNote" class="analysis-note"></p>
+              <div id="citationRanking" class="citation-ranking" aria-live="polite"></div>
+            </section>
+            <section class="analysis-panel" aria-labelledby="directionTitle">
+              <div class="analysis-panel-head"><h3 id="directionTitle">研究方向分布</h3></div>
+              <p class="analysis-note">按来源论文中的引用分类统计；一篇文献可涉及多个方向，各方向数量不可直接相加。</p>
+              <div id="directionChart" class="direction-chart"></div>
+              <details class="analysis-settings">
+                <summary>整理全局方向名称</summary>
+                <p class="analysis-note">为相近方向填写同一个名称即可归并；留空恢复原名。只影响全局分析，原始引用分类保持不变。</p>
+                <form id="directionForm"><div id="directionMappings" class="direction-mappings"></div><button class="button primary" type="submit">保存方向归并</button></form>
+              </details>
+            </section>
+          </div>
+          <section id="citationSelection" class="analysis-panel citation-selection" aria-label="被引文献与引用来源" aria-live="polite"></section>
         </div>
       </section>
     </main>

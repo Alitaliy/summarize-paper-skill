@@ -1,0 +1,94 @@
+.page-nav { display: flex; gap: 26px; margin-bottom: 24px; border-bottom: 1px solid var(--line); }
+.page-nav a { display: inline-flex; align-items: center; gap: 10px; padding: 0 2px 12px; border-bottom: 2px solid transparent; color: var(--muted); font-size: .9375rem; font-weight: 600; text-decoration: none; }
+.page-nav a:hover, .page-nav a[aria-current="page"] { color: var(--teal); border-bottom-color: var(--teal); }
+.page-nav span { font-size: .875rem; }
+#libraryView[hidden], #citationsView[hidden] { display: none; }
+.analysis-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin: 28px 0 22px; }
+.analysis-heading h2 { font-size: 1.6rem; }
+.analysis-heading > p { margin: 0; color: var(--muted); font-size: .875rem; }
+.analysis-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.analysis-stat { min-width: 0; padding: 18px 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
+.analysis-stat span { display: block; color: var(--muted); font-size: .8125rem; }
+.analysis-stat strong { display: block; margin-top: 6px; color: var(--teal); font-size: 1.875rem; font-weight: 650; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.analysis-note { margin: 8px 0 16px; color: var(--muted); font-size: .8125rem; line-height: 1.8; overflow-wrap: anywhere; }
+#analysisCoverage { margin: 14px 0 22px; }
+.analysis-toolbar { display: grid; grid-template-columns: minmax(200px, 1.4fr) minmax(180px, 1fr) 140px auto; align-items: end; gap: 14px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); margin-bottom: 22px; }
+.analysis-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); align-items: start; gap: 22px; }
+.analysis-main { display: grid; gap: 22px; min-width: 0; }
+.analysis-panel { min-width: 0; padding: 24px; background: var(--paper); border: 1px solid var(--line); border-radius: 14px; }
+.analysis-panel-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.analysis-panel-head h3 { font-size: 1.0625rem; }
+.analysis-panel-head > span { color: var(--muted); font-size: .8125rem; }
+.citation-ranking { max-height: 790px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #c0d4d9 transparent; }
+.citation-rank { display: grid; grid-template-columns: 24px minmax(0, 1fr) 48px; align-items: center; gap: 12px; width: 100%; padding: 16px 10px; border: 1px solid transparent; border-bottom-color: #e7edf0; border-radius: 8px; background: transparent; text-align: left; color: var(--ink); }
+.citation-rank:hover { background: #f6fafb; }
+.citation-rank[aria-pressed="true"] { border-color: #afd8cc; background: #edf8f4; }
+.rank-position { align-self: start; padding-top: 2px; color: #7c939d; font-size: .75rem; font-variant-numeric: tabular-nums; }
+.rank-content { min-width: 0; }
+.rank-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-size: .875rem; line-height: 1.55; font-weight: 600; }
+.rank-meta { display: block; margin: 5px 0 9px; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-size: .75rem; }
+.rank-track { display: block; width: 100%; height: 5px; overflow: hidden; border-radius: 4px; background: #e5efef; }
+.rank-fill { display: block; height: 100%; border-radius: inherit; background: #398f80; }
+.rank-count { color: var(--muted); font-size: .75rem; text-align: right; }
+.rank-count strong { margin-right: 3px; color: var(--teal); font-size: 1.4rem; font-variant-numeric: tabular-nums; }
+.rank-count small { display: block; font-size: .75rem; }
+.direction-chart { max-height: 440px; overflow-y: auto; scrollbar-width: thin; }
+.direction-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 14px 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--ink); text-align: left; }
+.direction-row:hover, .direction-row[aria-pressed="true"] { background: var(--violet-soft); border-color: #ddd5ed; }
+.direction-label { flex: 1; min-width: 0; font-size: .875rem; overflow-wrap: anywhere; }
+.direction-label .rank-track { margin-top: 8px; background: #f0edf5; }
+.direction-label .rank-fill { background: #9782bb; }
+.direction-value { flex: 0 0 auto; max-width: 45%; color: var(--muted); font-size: .75rem; }
+.analysis-settings { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); }
+.analysis-settings > summary { color: var(--teal); font-size: .875rem; font-weight: 600; cursor: pointer; }
+.analysis-settings > label { display: block; margin-top: 14px; }
+.analysis-settings select { margin: 8px 0 12px; }
+.analysis-settings .button { margin: 8px 8px 0 0; }
+.direction-mappings { display: grid; gap: 12px; max-height: 380px; overflow-y: auto; margin: 16px 0; scrollbar-width: thin; }
+.direction-mapping { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 12px; }
+.direction-mapping label { overflow-wrap: anywhere; }
+.citation-selection { scroll-margin-top: 16px; }
+.selected-title { font-size: 1.2rem; line-height: 1.65; overflow-wrap: anywhere; }
+.selected-metric { display: flex; align-items: baseline; gap: 10px; margin: 14px 0; }
+.selected-metric strong { color: var(--teal); font-size: 2.25rem; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.selected-metric span { color: var(--muted); font-size: .875rem; }
+.analysis-subtitle { margin: 28px 0 12px; font-size: .9375rem; font-weight: 650; }
+.citation-graph { overflow-x: auto; padding: 8px 0; border: 1px solid #e0eceb; border-radius: 10px; background: #f8fbfa; scrollbar-width: thin; }
+.citation-graph svg { display: block; width: 100%; min-width: 580px; }
+.citation-graph text { font-family: inherit; font-size: 13px; fill: var(--ink); }
+.graph-source { cursor: pointer; }
+.graph-source rect { fill: #fff; stroke: #cbdcde; }
+.graph-source:hover rect, .graph-source:focus rect { fill: #e1f4ed; stroke: var(--teal); stroke-width: 2px; }
+.graph-target rect { fill: #e2f3ed; stroke: #82bdae; }
+.graph-target .graph-count { font-size: 14px; fill: #177869; font-weight: 600; }
+.citation-sources { display: grid; gap: 12px; }
+.citation-source { min-width: 0; padding: 16px; border: 1px solid #e0e8ec; border-radius: 10px; background: #fafcfd; }
+.source-open { padding: 0; border: 0; background: transparent; color: var(--teal); font-size: .875rem; line-height: 1.7; font-weight: 600; text-align: left; overflow-wrap: anywhere; }
+.source-open:hover { text-decoration: underline; text-underline-offset: 3px; }
+.citation-source > .analysis-note { margin: 6px 0 10px; font-size: .75rem; }
+.citation-context { margin-top: 8px; }
+.citation-context summary { color: #536f7a; font-size: .8125rem; cursor: pointer; overflow-wrap: anywhere; }
+.citation-context .analysis-note { margin: 8px 0 0; }
+.reference-variants { max-height: 240px; overflow-y: auto; padding-left: 18px; font-size: .8125rem; color: var(--muted); overflow-wrap: anywhere; scrollbar-width: thin; }
+.reference-variants li + li { margin-top: 8px; }
+@media (max-width: 1100px) {
+  .analysis-stat { padding: 16px 14px; }
+  .analysis-panel { padding: 20px; }
+  .analysis-toolbar { grid-template-columns: minmax(180px, 1fr) minmax(150px, 1fr) 120px; }
+  .analysis-toolbar > .button { grid-column: 1 / -1; justify-self: start; }
+}
+@media (max-width: 900px) {
+  .analysis-layout { grid-template-columns: minmax(0, 1fr); }
+  .analysis-heading { align-items: start; flex-direction: column; }
+  .citation-ranking { max-height: 540px; }
+}
+@media (max-width: 560px) {
+  .analysis-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .analysis-stat:last-child { grid-column: 1 / -1; }
+  .analysis-heading h2 { font-size: 1.4rem; }
+  .analysis-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 14px; }
+  .analysis-toolbar .search-wrap { grid-column: 1 / -1; }
+  .analysis-panel { padding: 18px 14px; }
+  .citation-rank { grid-template-columns: 20px minmax(0, 1fr) 40px; gap: 8px; padding-inline: 4px; }
+  .direction-mapping { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+}
