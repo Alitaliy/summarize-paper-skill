@@ -26,17 +26,21 @@ class FakeElement {
     return stopped;
   }
 }
+const storedValues = {};
 const sandbox = {
   document: { addEventListener() {}, createElement: tagName => new FakeElement(tagName) },
   window: { XLSX: { utils: { sheet_to_json: sheet => sheet } } },
-  localStorage: { setItem() {}, getItem() { return null; } },
+  localStorage: {
+    setItem(name, value) { storedValues[name] = String(value); },
+    getItem(name) { return storedValues[name] ?? null; },
+  },
 };
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/app.js'), 'utf8'), sandbox);
 const api = vm.runInContext(`({normalizeJsonPayload, parseMarkdown, parseWorkbookReferenceGroups,
   parseWorkbookReferenceMetadata, normalizeReferenceMetadata, rowFromHeaders, applyPaperMetadataUpdate,
   referenceStatusText, selectPreferredSummaryFiles, mergePaperMetadata, normalizePaper,
-  createStarButton, togglePaperStar, mergePapers})`, sandbox);
+  createStarButton, togglePaperStar, toggleStoredPaperStar, mergePapers, loadLibrary})`, sandbox);
 const plain = value => JSON.parse(JSON.stringify(value));
 const input = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8'));
 const expected = api.normalizeJsonPayload(input)[0];
@@ -83,21 +87,26 @@ const starredPaper = api.normalizePaper({ ...input, starred: true });
 assert.equal(starredPaper.starred, true);
 const unstarredPaper = api.normalizePaper({ ...input, paper_title: `${input.paper_title} 2` });
 assert.equal(unstarredPaper.starred, false);
-sandbox.testSaveCalls = 0;
 sandbox.testToast = '';
-vm.runInContext('saveLibrary = () => { testSaveCalls += 1; }; toast = message => { testToast = message; };', sandbox);
-const starButton = api.createStarButton(unstarredPaper);
+const visibleCopy = { ...unstarredPaper };
+sandbox.testStoredPaper = unstarredPaper;
+vm.runInContext('library = [testStoredPaper]; toast = message => { testToast = message; };', sandbox);
+const starButton = api.createStarButton(visibleCopy);
 assert.equal(starButton.textContent, '☆');
 assert.equal(starButton.attributes['aria-pressed'], 'false');
 assert.equal(starButton.click(), true, 'Star clicks must not open the paper card');
-assert.equal(unstarredPaper.starred, true);
+assert.equal(unstarredPaper.starred, true, 'The stored paper record must be updated, not only its visible copy');
 assert.equal(starButton.textContent, '★');
 assert.ok(starButton.className.includes('is-starred'));
 assert.equal(starButton.attributes['aria-pressed'], 'true');
+assert.equal(JSON.parse(storedValues['summarize-paper-library-v2'])[0].starred, true);
 assert.equal(starButton.click(), true);
 assert.equal(unstarredPaper.starred, false);
-assert.equal(sandbox.testSaveCalls, 2);
-assert.equal(api.togglePaperStar(unstarredPaper), true);
+assert.equal(JSON.parse(storedValues['summarize-paper-library-v2'])[0].starred, false);
+starButton.click();
+vm.runInContext('library = [];', sandbox);
+api.loadLibrary();
+assert.equal(vm.runInContext('library[0].starred', sandbox), true, 'The star must survive a save and reload cycle');
 
 const importedStar = api.normalizePaper({ ...input, starred: true });
 const existingCopy = api.normalizePaper({ ...input });

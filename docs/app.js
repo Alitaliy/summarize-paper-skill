@@ -1110,7 +1110,9 @@ function createStarButton(paper) {
   syncStarButton(starButton, paper);
   starButton.addEventListener("click", (event) => {
     event.stopPropagation();
-    togglePaperStar(paper);
+    const starred = toggleStoredPaperStar(paper.id);
+    if (starred === null) return;
+    paper.starred = starred;
     syncStarButton(starButton, paper);
     saveLibrary();
     toast(paper.starred ? "已标记为重点" : "已取消重点标记");
@@ -1122,6 +1124,11 @@ function togglePaperStar(paper) {
   if (!paper) return false;
   paper.starred = !Boolean(paper.starred);
   return paper.starred;
+}
+
+function toggleStoredPaperStar(id) {
+  const storedPaper = library.find((paper) => paper.id === id);
+  return storedPaper ? togglePaperStar(storedPaper) : null;
 }
 
 function syncStarButton(starButton, paper) {
