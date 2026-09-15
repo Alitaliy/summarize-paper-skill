@@ -4,10 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>论文总结管理器</title>
-    <meta name="theme-color" content="#14213a" />
+    <meta name="theme-color" content="#f5f5f3" />
     <link rel="stylesheet" href="./styles.css?v=20260915-cloud1" />
     <link rel="stylesheet" href="./analytics.css?v=20260914-analytics" />
-    <link rel="stylesheet" href="./workspace.css?v=20260915-design1" />
+    <link rel="stylesheet" href="./editorial.css?v=20260915-journal1" />
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
     <script src="./data-model.js?v=20260915-cloud1" defer></script>
     <script src="./library-store.js?v=20260915-cloud1" defer></script>
@@ -19,28 +19,27 @@
     <script src="./cloud-store.js?v=20260915-cloud1" defer></script>
     <script src="./cloud-ui.js?v=20260915-cloud1" defer></script>
     <script src="./analytics.js?v=20260915-cloud1" defer></script>
-    <script src="./app.js?v=20260915-cloud1" defer></script>
+    <script src="./app.js?v=20260915-journal1" defer></script>
   </head>
   <body>
-    <aside class="app-sidebar" aria-label="工作台">
+    <header class="masthead">
       <div class="app-brand">
-        <svg class="brand-mark" viewBox="0 0 40 40" fill="none" aria-hidden="true"><rect x="8" y="6" width="24" height="28" rx="4" stroke="currentColor" stroke-width="1.8"/><path d="M14 6v28M20 14h6M20 20h6M20 26h3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <span class="brand-sign" aria-hidden="true">p<span>.</span></span>
         <div>
-          <p class="brand-name">论文总结</p>
-          <p class="eyebrow">summarize paper</p>
+          <h1 class="brand-name">论文总结</h1>
+          <p class="eyebrow">A RESEARCH ARCHIVE</p>
         </div>
       </div>
       <nav class="page-nav" aria-label="页面导航">
-        <a href="#/library" id="libraryNav" aria-current="page"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.6"/></svg>文献库</a>
-        <a href="#/citations" id="citationsNav"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 7h4m-4 10h4m0-10v10m0-5h4" stroke="currentColor" stroke-width="1.6"/><rect x="3" y="4" width="5" height="6" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="3" y="14" width="5" height="6" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="16" y="9" width="5" height="6" rx="1.5" stroke="currentColor" stroke-width="1.6"/></svg>全局引用分析</a>
+        <a href="#/library" id="libraryNav" aria-current="page"><span aria-hidden="true">01</span> 文献库</a>
+        <a href="#/citations" id="citationsNav"><span aria-hidden="true">02</span> 全局引用分析</a>
       </nav>
-      <div class="sidebar-bottom">
-        <p class="sidebar-label">账号与同步</p>
+      <div class="account-action">
         <button id="cloudButton" class="button" type="button">云端同步</button>
       </div>
-    </aside>
-    <header class="app-header">
-      <h1>文献工作台</h1>
+    </header>
+    <section class="app-header" aria-label="文献导入与导出">
+      <p class="action-caption">资料管理</p>
       <div class="header-actions">
         <button id="watchButton" class="button"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3V7Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 11v5m-2.5-2.5h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>监听文件夹</button>
         <label class="button primary">
@@ -54,12 +53,16 @@
           <button id="migrationButton" class="button quiet">导出迁移包</button>
         </div>
       </div>
-    </header>
+    </section>
 
     <main class="app-shell">
       <p id="storageStatus" class="storage-status" role="alert" hidden></p>
       <p id="cloudBanner" class="cloud-banner" role="status" hidden></p>
       <div id="libraryView">
+      <div class="collection-heading">
+        <div><p class="eyebrow">THE COLLECTION</p><h2>文献档案<span aria-hidden="true">.</span></h2></div>
+        <p id="resultSummary">暂无文献</p>
+      </div>
       <div class="library-overview">
       <section id="watchPanel" class="watch-panel">
         <div class="watch-copy">
@@ -94,13 +97,6 @@
 
       </div>
       <section class="library-board" aria-label="文献缩略卡片墙">
-        <section class="library-head">
-          <div>
-            <h2>我的文献</h2>
-            <p id="resultSummary">暂无文献</p>
-          </div>
-        </section>
-
         <section class="toolbar" aria-label="文献筛选">
           <div class="search-wrap">
             <label for="searchInput">搜索</label>
@@ -152,7 +148,7 @@
       </div>
       <section id="citationsView" class="analytics-view" hidden aria-labelledby="analyticsTitle">
         <div class="analysis-heading">
-          <div><p class="eyebrow">Citation insights</p><h2 id="analyticsTitle">全局引用分析</h2></div>
+          <div><p class="eyebrow">THE CONNECTIONS</p><h2 id="analyticsTitle">引用之间<span aria-hidden="true">.</span></h2></div>
           <p>一篇来源论文引用同一文献，只计一次。</p>
         </div>
         <div id="analysisStats" class="analysis-stats"></div>

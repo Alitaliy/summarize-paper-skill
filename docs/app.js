@@ -1210,8 +1210,11 @@ function renderCards(papers) {
     const accent = document.createElement("span");
     accent.className = "paper-card-accent";
     accent.setAttribute("aria-hidden", "true");
+    const year = document.createElement("span");
+    year.className = "paper-card-year";
+    year.textContent = paper.year || "年份未标注";
     const starButton = createStarButton(paper);
-    cardHead.append(accent, starButton);
+    cardHead.append(accent, year, starButton);
 
     const title = document.createElement("h3");
     title.className = "paper-card-title";
