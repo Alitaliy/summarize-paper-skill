@@ -57,6 +57,9 @@ let mutationQueue = Promise.resolve();
 let searchCache = new WeakMap();
 let statsRevision = -1;
 let citationModel = null;
+let loadedRepository = null;
+let contentRevision = -1;
+let detailView = null;
 const scanCache = new Map();
 
 const els = {};
@@ -290,16 +293,24 @@ function bindEvents() {
 }
 
 async function loadLibrary() {
+  if (citationModel && loadedRepository === repository && repository.readMeta) {
+    const meta = await repository.readMeta();
+    if (meta && (meta.contentRevision ?? meta.revision) === contentRevision) {
+      revision = meta.revision; return false;
+    }
+  }
   const saved = await repository.read();
   const loaded = saved.papers.map(normalizePaper);
   if (loaded.some(paper => !paper)) throw new Error("存在无法读取的文献记录");
   loaded.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
   if (citationModel && window.CloudData?.equal(loaded, library) && window.CloudData.equal(saved.analysis_settings, analysisSettings)) {
+    loadedRepository = repository; contentRevision = saved.contentRevision ?? saved.revision;
     revision = saved.revision; return false;
   }
   library = loaded;
   library.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
   revision = saved.revision;
+  loadedRepository = repository; contentRevision = saved.contentRevision ?? saved.revision;
   analysisSettings = saved.analysis_settings;
   dataChanged();
   citationModel = CitationIndex.build(library, analysisSettings);
@@ -332,6 +343,7 @@ function runMutation(action) {
 
 async function saveLibrary(change) {
   revision = await repository.commit({ ...change, expectedRevision: revision });
+  if (change.puts?.length || change.deletes?.length || change.settings !== undefined) contentRevision = revision;
   if (els.storageStatus) els.storageStatus.hidden = true;
 }
 
@@ -1318,6 +1330,13 @@ function openDetail(id, { ignoreFilters = false } = {}) {
   const paper = library.find((item) => item.id === id);
   if (!paper) return;
   const rows = ignoreFilters ? paper.rows : filterRows(paper.rows, paper);
+  if (detailView?.paper === paper && rows.length === detailView.rows.length && rows.every((row, i) => row === detailView.rows[i])) {
+    selectDetailTab("summary");
+    els.detailPanel.classList.add("is-open");
+    els.detailPanel.setAttribute("aria-hidden", "false");
+    return;
+  }
+  detailView = { paper, rows, referencesRendered: false };
   const references = paperReferences(paper);
 
   els.detailSource.textContent = paper.sourceFile;
@@ -1333,9 +1352,6 @@ function openDetail(id, { ignoreFilters = false } = {}) {
 
   for (const [dimension, groupRows] of groupRowsByDimension(rows)) {
     els.detailRows.append(renderDetailSection(dimension, groupRows));
-  }
-  for (const group of paper.reference_groups || []) {
-    els.detailReferences.append(renderReferenceGroup(group));
   }
   els.referenceEmpty.style.display = paper.reference_groups?.length ? "none" : "block";
   selectDetailTab("summary");
@@ -1356,6 +1372,10 @@ function referenceStatusText(paper) {
 
 function selectDetailTab(tab) {
   const showReferences = tab === "references";
+  if (showReferences && detailView && !detailView.referencesRendered) {
+    els.detailReferences.replaceChildren(...(detailView.paper.reference_groups || []).map(renderReferenceGroup));
+    detailView.referencesRendered = true;
+  }
   els.summaryTab.classList.toggle("is-active", !showReferences);
   els.referencesTab.classList.toggle("is-active", showReferences);
   els.summaryTab.setAttribute("aria-selected", String(!showReferences));

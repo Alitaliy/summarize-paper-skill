@@ -1,6 +1,7 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
+const {IDBObjectStore}=require('fake-indexeddb');
 const {session,descendants}=require('./app_storage.cjs');
 const {database,owner}=require('./cloud_sync.cjs');
 async function run(){
@@ -27,7 +28,12 @@ async function run(){
     const star=descendants(elements.paperGrid).find(e=>e.className.includes('star-button'));
     let builds=0;const build=context.CitationIndex.build;context.CitationIndex.build=(...args)=>{builds++;return build(...args);};
     await star.fire('click');assert.equal(star.textContent,'☆');
-    await store.sync();await settle();
+    let fullReads=0;const getAll=IDBObjectStore.prototype.getAll;
+    IDBObjectStore.prototype.getAll=function(...args){if(this.name==='papers')fullReads++;return getAll.apply(this,args);};
+    try {
+      await store.sync();await settle();
+      assert.equal(fullReads,0,'Acknowledgement and app subscription do not read/normalize the full library');
+    }finally{IDBObjectStore.prototype.getAll=getAll;}
     assert.equal(builds,0,'Star and sync acknowledgement do not rebuild citation index');
     const rows=(await db.query('select public.paper_library_read_papers($1,$2) as r',[(await store.read()).sync.remoteRevision,[original.id]])).rows[0].r;
     assert.equal(rows[0].starred,false);assert.equal(rows[0].reference_groups[0].references.length,1);

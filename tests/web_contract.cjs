@@ -109,9 +109,15 @@ assert.equal(await starButton.click(), true);
 assert.equal(unstarredPaper.starred, false);
 assert.equal(JSON.parse(storedValues['summarize-paper-library-v3']).papers[0].starred, false);
 await starButton.click();
-vm.runInContext('library = [];', sandbox);
-await api.loadLibrary();
-assert.equal(vm.runInContext('library[0].starred', sandbox), true, 'The star must survive a save and reload cycle');
+// A reload discards the complete controller state, including revision caches.
+const reloaded = { ...sandbox };
+vm.createContext(reloaded);
+for (const file of ['data-model.js', 'library-store.js', 'citation-index.js', 'app.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs', file), 'utf8'), reloaded);
+reloaded.testRepository = await vm.runInContext('LibraryStore.open({ normalizePaper })', reloaded);
+await vm.runInContext('repository = testRepository; loadLibrary()', reloaded);
+assert.equal(vm.runInContext('library[0].starred', reloaded), true, 'The star must survive a save and reload cycle');
+reloaded.testRepository.close();
+await api.loadLibrary(); // Observe identity settings initialized by the fresh session.
 
 const importedStar = api.normalizePaper({ ...input, starred: true });
 const existingCopy = api.normalizePaper({ ...input });

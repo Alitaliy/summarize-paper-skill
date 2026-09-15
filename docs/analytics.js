@@ -10,6 +10,8 @@
   let selectedWorks = [];
   let remoteRequest = 0;
   let remoteTimer = null;
+  let renderedRanking = null;
+  let renderedSelection = null;
   const els = {};
   const node = (tag, className = "", text = "") => {
     const element = document.createElement(tag);
@@ -62,6 +64,7 @@
     }
     document.title = analytics ? "全局引用分析 · 论文总结管理器" : "论文总结管理器";
     if (analytics) refresh();
+    else { ++remoteRequest; root.clearTimeout?.(remoteTimer); }
   }
 
   function refresh() {
@@ -99,10 +102,13 @@
     const shown = state.limit ? works.slice(0, state.limit) : works;
     els.rankingCount.textContent = `${shown.length} / ${works.length} 篇`;
     els.rankingNote.textContent = state.direction ? `当前方向「${state.direction}」内的被引篇数；另列全库篇数。点击条目查看引用来源。` : "按不同来源论文的篇数排序；数值相同按题名排列。点击条目查看引用来源。";
-    els.citationRanking.replaceChildren();
-    if (!works.length) els.citationRanking.append(small(state.model.works.length ? "没有匹配结果，试试清空搜索或切换方向。" : "还没有可分析的引用。请返回文献库，导入带有“引用脉络”的总结文件。"));
+    const rankingKey = JSON.stringify([modelRevision, builtSettingsRevision, state.direction, shown.map(work => work.id)]);
+    const rankingChanged = renderedRanking !== rankingKey;
+    renderedRanking = rankingKey;
+    if (rankingChanged) els.citationRanking.replaceChildren();
+    if (rankingChanged && !works.length) els.citationRanking.append(small(state.model.works.length ? "没有匹配结果，试试清空搜索或切换方向。" : "还没有可分析的引用。请返回文献库，导入带有“引用脉络”的总结文件。"));
     const max = works[0]?.count || 1;
-    shown.forEach((work, position) => {
+    if (rankingChanged) shown.forEach((work, position) => {
       const row = action("", "citation-rank", () => {
         state.selected = work.id;
         for (const item of els.citationRanking.children) item.setAttribute("aria-pressed", String(item.dataset.workId === work.id));
@@ -122,6 +128,7 @@
       row.append(node("span", "rank-position", String(position + 1).padStart(2, "0")), content, count);
       els.citationRanking.append(row);
     });
+    else for (const row of els.citationRanking.children) row.setAttribute("aria-pressed", String(row.dataset.workId === state.selected));
     if (renderedDirection !== state.direction) { renderDirections(); renderedDirection = state.direction; }
     renderSelection(selected);
     if (!remoteWorks) requestRemoteRanking(works);
@@ -136,6 +143,7 @@
     if (state.query.trim()) return;
     const direction = state.direction, limit = state.limit;
     remoteTimer = root.setTimeout(async () => {
+      if (request !== remoteRequest || revision !== modelRevision || !active()) return;
       try {
         const rows = [];
         const count = limit || localWorks.length;
@@ -200,6 +208,9 @@
   }
 
   function renderSelection(work) {
+    const key = JSON.stringify([modelRevision, builtSettingsRevision, state.direction, work?.id]);
+    if (renderedSelection === key) return;
+    renderedSelection = key;
     const panel = els.citationSelection;
     panel.replaceChildren();
     if (!work) { panel.append(node("h3", "", "引用来源"), small("选择左侧文献，查看哪些论文引用了它。")); return; }

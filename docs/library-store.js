@@ -7,11 +7,13 @@
   const conflict = () => Object.assign(new Error("文献库已在其他标签页更新，请重试本次操作"), { code: "revision_conflict" });
   const empty = () => ({ schema_version: 3, revision: 0, papers: [], analysis_settings: {} });
   const copy = value => JSON.parse(JSON.stringify(value));
+  // An older open tab may write a new revision without updating our content marker.
+  const contentVersion = state => state.contentRevisionAt === state.revision ? state.contentRevision : state.revision;
 
   function validate(snapshot) {
     if (snapshot.schema_version !== 3) throw new Error("本地数据库版本不兼容，已保留原数据");
     root.PaperData.validateBackup(snapshot);
-    return snapshot;
+    return { ...snapshot, contentRevision: contentVersion(snapshot) };
   }
 
   function legacy(normalize) {
@@ -53,7 +55,7 @@
       });
       db.onversionchange = () => db.close();
       // Read legacy data before the transaction, but decide initialization inside it.
-      const initialized = await read();
+      const initialized = await readMeta();
       if (!initialized) {
         const initial = initialData();
         await transaction("readwrite", (tx, done, fail) => {
@@ -80,9 +82,9 @@
       db?.close(); channel?.close(); root.removeEventListener?.("storage", storageListener); throw error;
     }
 
-    function transaction(mode, run) {
+    function transaction(mode, run, stores = ["papers", "meta"]) {
       return new Promise((resolve, reject) => {
-        const tx = db.transaction(["papers", "meta"], mode);
+        const tx = db.transaction(stores, mode);
         let result, failure;
         tx.oncomplete = () => resolve(result);
         tx.onabort = tx.onerror = () => reject(failure || tx.error || new Error("本地保存失败"));
@@ -105,8 +107,27 @@
       }).then(snapshot => snapshot && validate(snapshot));
     }
 
+    // Sync status/revision checks must not clone and validate every reference.
+    // Both metadata records are read in the same transaction for a coherent view.
+    async function readMeta() {
+      if (!db) {
+        const { papers, analysis_settings, ...state } = await read();
+        return state;
+      }
+      return transaction("readonly", (tx, done) => {
+        const meta = tx.objectStore("meta"), state = meta.get("state"), sync = meta.get("sync");
+        let completed = 0;
+        const finish = () => {
+          if (++completed === 2) done(state.result ? { ...state.result, contentRevision: contentVersion(state.result),
+            ...(sync.result === undefined ? {} : { sync: sync.result }) } : null);
+        };
+        state.onsuccess = finish; sync.onsuccess = finish;
+      }, ["meta"]);
+    }
+
     async function commit({ puts = [], deletes = [], settings, sync, expectedRevision }) {
       let revision;
+      const contentChanged = puts.length > 0 || deletes.length > 0 || settings !== undefined;
       if (!db) {
         const write = async () => {
           const snapshot = await read();
@@ -114,7 +135,9 @@
           const papers = new Map(snapshot.papers.map(paper => [paper.id, paper]));
           deletes.forEach(id => papers.delete(id)); puts.forEach(paper => papers.set(paper.id, copy(paper)));
           revision = snapshot.revision + 1;
-          const next = validate({ ...snapshot, revision, papers: [...papers.values()], analysis_settings: settings ?? snapshot.analysis_settings, ...(sync === undefined ? {} : { sync }) });
+          const next = validate({ ...snapshot, revision,
+            contentRevision: contentChanged ? revision : snapshot.contentRevision, contentRevisionAt: revision,
+            papers: [...papers.values()], analysis_settings: settings ?? snapshot.analysis_settings, ...(sync === undefined ? {} : { sync }) });
           root.localStorage.setItem(fallbackKey, JSON.stringify(next));
         };
         if (root.navigator?.locks) await root.navigator.locks.request(databaseName, write); else await write();
@@ -129,7 +152,8 @@
             const papers = tx.objectStore("papers");
             deletes.forEach(id => papers.delete(id)); puts.forEach(paper => papers.put(paper));
             const { analysis_settings: legacySettings, ...stateBase } = state;
-            meta.put({ ...stateBase, revision }, "state");
+            meta.put({ ...stateBase, revision,
+              contentRevision: contentChanged ? revision : contentVersion(state), contentRevisionAt: revision }, "state");
             if (settings !== undefined || legacySettings !== undefined) meta.put(settings ?? legacySettings, "analysis_settings");
             if (sync !== undefined) meta.put(sync, "sync");
             done(revision);
@@ -141,7 +165,7 @@
       return revision;
     }
 
-    return { read, commit, backend: db ? "indexeddb" : "localStorage",
+    return { read, readMeta, commit, backend: db ? "indexeddb" : "localStorage",
       subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); },
       close() { db?.close(); channel?.close(); root.removeEventListener?.("storage", storageListener); } };
   }

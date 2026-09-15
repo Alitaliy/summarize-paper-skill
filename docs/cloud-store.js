@@ -69,7 +69,7 @@
     async function acknowledge(id, remoteRevision) {
       for (;;) {
         if (closed) return;
-        const snapshot = await cache.read();
+        const snapshot = await cache.readMeta();
         if (snapshot.sync.queue[0]?.id !== id) return;
         try {
           await cache.commit({ expectedRevision: snapshot.revision,
@@ -82,7 +82,7 @@
       report("syncing");
       try {
         for (let sent = 0; sent < 50 && !closed; sent++) {
-          const snapshot = await cache.read(), state = snapshot.sync || emptySync();
+          const snapshot = await cache.readMeta(), state = snapshot.sync || emptySync();
           if (!state.initialized) return;
           const operation = state.queue[0];
           if (operation) {
@@ -104,7 +104,7 @@
         schedule();
       } catch (error) {
         lastError = error;
-        const current = await cache.read();
+        const current = await cache.readMeta();
         report(conflict(error) ? "conflict" : "offline", { error, pending: current.sync?.queue.length || 0 });
         throw error;
       }
@@ -141,13 +141,13 @@
       });
     }
     async function analysis(options) {
-      const snapshot = await cache.read();
+      const snapshot = await cache.readMeta();
       if (closed || !snapshot.sync?.initialized || snapshot.sync.queue.length || lastError) return null;
       const result = await rpc("analysis", { expected_revision: snapshot.sync.remoteRevision, ...options });
-      const current = await cache.read();
+      const current = await cache.readMeta();
       return current.revision === snapshot.revision && !closed ? result : null;
     }
-    return { read: cache.read, commit, initialize, sync, resolve, analysis, status: () => rpc("status"), backend: "supabase", namespace,
+    return { read: cache.read, readMeta: cache.readMeta, commit, initialize, sync, resolve, analysis, status: () => rpc("status"), backend: "supabase", namespace,
       subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); },
       close() { closed = true; root.clearTimeout(timer); unsubscribe(); subscribers.clear(); cache.close(); } };
   }

@@ -40,6 +40,29 @@ function session(storage = new Map(), indexedDB = new IDBFactory()) {
   const writes = await Promise.allSettled([store.commit({ puts: [{ ...state.papers[0], starred: true }], expectedRevision: state.revision }),
     reopened.commit({ deletes: ['paper-a'], expectedRevision: state.revision })]);
   assert.equal(writes.filter(result => result.status === 'fulfilled').length, 1, 'Only one competing revision can commit');
+  const content = await store.readMeta();
+  const ack = await store.commit({ sync: { initialized: true, queue: [] }, expectedRevision: content.revision });
+  assert.equal((await store.readMeta()).contentRevision, content.contentRevision, 'Sync-only commits retain the content version');
+  assert.equal((await store.readMeta()).revision, ack, 'Metadata commits still advance the CAS revision');
+  await store.commit({ settings: { directions: { Methods: 'Changed' } }, expectedRevision: ack });
+  state = await store.readMeta();
+  assert.equal(state.contentRevision, state.revision, 'Settings invalidate cached analysis even when papers do not change');
+
+  // A still-open pre-upgrade tab preserves unknown fields but only bumps revision.
+  const oldTab = await new Promise((resolve, reject) => {
+    const request = context.indexedDB.open('summarize-paper-library', 1);
+    request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+  });
+  await new Promise((resolve, reject) => {
+    const tx = oldTab.transaction('meta', 'readwrite'), meta = tx.objectStore('meta'), request = meta.get('state');
+    request.onsuccess = () => meta.put({ ...request.result, revision: request.result.revision + 1 }, 'state');
+    tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+  });
+  oldTab.close();
+  const legacyWrite = await store.readMeta();
+  assert.equal(legacyWrite.contentRevision, legacyWrite.revision, 'Older tab writes cannot leave the new content cache stale');
+  await store.commit({ sync: {}, expectedRevision: legacyWrite.revision });
+  assert.equal((await store.readMeta()).contentRevision, legacyWrite.revision, 'Acknowledgement preserves an untracked content change');
   store.close(); reopened.close();
 
   const broken = new Map([['summarize-paper-library-v2', '{broken']]);
@@ -50,6 +73,9 @@ function session(storage = new Map(), indexedDB = new IDBFactory()) {
 
   const fallbackContext = session(new Map([['summarize-paper-library-v2', old]]), null);
   const fallback = await fallbackContext.LibraryStore.open();
+  state = await fallback.read();
+  await fallback.commit({ sync: {}, expectedRevision: state.revision });
+  assert.equal((await fallback.readMeta()).contentRevision, state.contentRevision, 'Fallback uses the same content-version contract');
   state = await fallback.read();
   fallbackContext.localStorage.setItem = () => { throw new Error('QuotaExceededError'); };
   await assert.rejects(fallback.commit({ deletes: ['paper-a'], expectedRevision: state.revision }), /Quota/);

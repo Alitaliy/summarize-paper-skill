@@ -79,8 +79,13 @@ async function run() {
     for(const file of ['data-model.js','citation-index.js','migration.js','library-store.js','cloud-data.js','cloud-store.js'])vm.runInContext(fs.readFileSync(`${__dirname}/../docs/${file}`,'utf8'),freshContext);
     b=await freshContext.CloudStore.open({client,userId:owner,project:'test'});await b.initialize();
     assert.equal((await b.read()).papers.length,2);
-    calls.length=0;await b.sync();assert.deepEqual(calls.map(c=>c.name),['paper_library_status']);
-    assert.ok((await b.analysis({page_size:20})).items.length>0);
+    let fullReads=0;const originalGetAll=IDBObjectStore.prototype.getAll;
+    IDBObjectStore.prototype.getAll=function(...args){if(this.name==='papers')fullReads++;return originalGetAll.apply(this,args);};
+    try {
+      calls.length=0;await b.sync();assert.deepEqual(calls.map(c=>c.name),['paper_library_status']);
+      assert.ok((await b.analysis({page_size:20})).items.length>0);
+      assert.equal(fullReads,0,'Idle sync and SQL ranking checks do not clone the full library');
+    } finally {IDBObjectStore.prototype.getAll=originalGetAll;}
     calls.length=0;sessionOwner=other;
     await assert.rejects(a.sync(),/登录账号/);assert.equal(calls.length,0,'Account switching cannot send another cache under the new login');
     console.log('Cloud store: isolated caches, lost-response retry, edits after retry, refresh/offline recovery, conflicts, atomic outbox and incremental reads passed.');
