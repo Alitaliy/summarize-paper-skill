@@ -423,3 +423,6 @@ textarea { min-height: 260px; margin: 24px 0 20px; padding: 16px; resize: vertic
   *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; }
   .paper-card:hover, .star-button:hover { transform: none; }
 }
+/* Persistent storage errors stay visible until the next successful save. */
+.storage-status { padding: 14px 18px; border: 1px solid #b94a42; border-radius: 8px; color: #862d28; background: #fff0ee; }
+.storage-status[hidden] { display: none; }

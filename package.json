@@ -1,0 +1,12 @@
+{
+  "name": "summarize-paper-skill",
+  "private": true,
+  "scripts": {
+    "test": "node tests/citation_index.cjs && node tests/analytics_ui.cjs && node tests/local_data.cjs && node tests/storage.cjs && node tests/app_storage.cjs && node tests/cloud_schema.cjs",
+    "check": "node scripts/check-scripts.cjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "fake-indexeddb": "6.2.5"
+  }
+}

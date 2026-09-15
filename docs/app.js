@@ -1,5 +1,3 @@
-const STORAGE_KEY = "summarize-paper-library-v2";
-const LEGACY_STORAGE_KEY = "summarize-paper-library-v1";
 const HANDLE_DB = "summarize-paper-library-handles";
 const HANDLE_STORE = "handles";
 const HANDLE_KEY = "watch-directory";
@@ -48,24 +46,50 @@ let watchedFolderCount = 0;
 let watchedImportFileCount = 0;
 let skippedScanIssueCount = 0;
 let importErrorCount = 0;
+let repository = null;
+let revision = 0;
+let dataRevision = 0;
+let analysisSettings = {};
+let mutationQueue = Promise.resolve();
+let searchCache = new WeakMap();
+let statsRevision = -1;
+let citationModel = null;
+const scanCache = new Map();
 
 const els = {};
 
 document.addEventListener("DOMContentLoaded", async () => {
   bindElements();
   hydrateFilters();
-  loadLibrary();
+  try {
+    repository = await LibraryStore.open({ normalizePaper });
+    await loadLibrary();
+  } catch (error) {
+    repository?.close(); repository = null;
+    showStorageError(`本地文献库未能打开：${error.message}。原数据已保留，请关闭其他标签页后刷新重试。`);
+  }
   bindEvents();
   window.CitationAnalytics?.init({
     getLibrary: () => library,
+    getRevision: () => dataRevision,
+    getSettings: () => analysisSettings,
+    getModel: () => citationModel,
+    saveSettings: settings => runMutation(async () => {
+      const next = { ...settings, identities: combineSettings(analysisSettings, settings).identities };
+      const model = CitationIndex.build(library, next);
+      next.identities = model.identities;
+      await saveLibrary({ settings: next });
+      analysisSettings = next; citationModel = model;
+      return next;
+    }),
     openPaper: (id) => openDetail(id, { ignoreFilters: true }),
     notify: toast,
   });
-  window.addEventListener("storage", (event) => {
-    if (event.key === STORAGE_KEY || event.key === null) { loadLibrary(); render(); }
+  repository?.subscribe(() => {
+    runMutation(async () => { await loadLibrary(); window.CitationAnalytics?.replaceSettings(analysisSettings); render(); }).catch(() => {});
   });
   render();
-  await restoreWatchedDirectory();
+  if (repository) await restoreWatchedDirectory();
 });
 
 function bindElements() {
@@ -74,6 +98,8 @@ function bindElements() {
     watchButton: document.querySelector("#watchButton"),
     pasteButton: document.querySelector("#pasteButton"),
     exportButton: document.querySelector("#exportButton"),
+    migrationButton: document.querySelector("#migrationButton"),
+    storageStatus: document.querySelector("#storageStatus"),
     searchInput: document.querySelector("#searchInput"),
     dimensionFilter: document.querySelector("#dimensionFilter"),
     typeFilter: document.querySelector("#typeFilter"),
@@ -181,13 +207,15 @@ function bindEvents() {
   });
 
   els.exportButton.addEventListener("click", exportLibrary);
+  els.migrationButton.addEventListener("click", exportMigration);
 
-  els.clearLibraryButton.addEventListener("click", () => {
+  els.clearLibraryButton.addEventListener("click", async () => {
     if (!library.length || !confirm("清空当前浏览器中的全部文献总结？监听目录中的原始文件不会被删除。")) return;
-    library = [];
-    saveLibrary();
-    render();
-    toast("本地文献库已清空");
+    try { await runMutation(async () => {
+      await saveLibrary({ deletes: library.map(paper => paper.id) });
+      library = []; dataChanged(); citationModel = CitationIndex.build(library, analysisSettings);
+      render(); toast("本地文献库已清空");
+    }); } catch { /* Persistent status contains the failure. */ }
   });
 
   els.pasteButton.addEventListener("click", () => {
@@ -198,10 +226,10 @@ function bindEvents() {
   els.pasteImportButton.addEventListener("click", async (event) => {
     event.preventDefault();
     try {
-      const payload = JSON.parse(els.pasteText.value);
+      let payload = JSON.parse(els.pasteText.value);
+      if (payload.format === "summarize-paper-migration") { PaperMigration.validate(payload); payload = PaperMigration.restore(payload); }
       const papers = normalizeJsonPayload(payload, "粘贴 JSON");
-      window.CitationAnalytics?.importSettings(payload.analysis_settings);
-      mergePapers(papers, "粘贴 JSON", { forceToast: true });
+      await mergePapers(papers, "粘贴 JSON", { forceToast: true, settings: payload.analysis_settings });
       els.pasteDialog.close();
     } catch (error) {
       toast(`JSON 导入失败：${error.message}`);
@@ -219,17 +247,45 @@ function bindEvents() {
   });
 }
 
-function loadLibrary() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY) || "[]");
-    library = Array.isArray(saved) ? saved.map(normalizePaper).filter(Boolean) : [];
-  } catch {
-    library = [];
-  }
+async function loadLibrary() {
+  const saved = await repository.read();
+  const loaded = saved.papers.map(normalizePaper);
+  if (loaded.some(paper => !paper)) throw new Error("存在无法读取的文献记录");
+  library = loaded;
+  library.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  revision = saved.revision;
+  analysisSettings = saved.analysis_settings;
+  dataChanged();
+  citationModel = CitationIndex.build(library, analysisSettings);
+  const next = CitationIndex.normalizeSettings({ ...analysisSettings, identities: citationModel.identities });
+  if (JSON.stringify(next) !== JSON.stringify(analysisSettings)) await saveLibrary({ settings: next });
+  analysisSettings = next;
 }
 
-function saveLibrary() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(library, null, 2));
+function dataChanged() { dataRevision += 1; searchCache = new WeakMap(); }
+
+function showStorageError(message) {
+  if (els.storageStatus) { els.storageStatus.hidden = false; els.storageStatus.textContent = message; }
+  toast(message);
+}
+
+function runMutation(action) {
+  const pending = mutationQueue.then(async () => {
+    if (!repository) throw new Error("本地数据库尚未就绪，未修改数据");
+    return action();
+  });
+  mutationQueue = pending.catch(async error => {
+    if (error.code === "revision_conflict") {
+      try { await loadLibrary(); window.CitationAnalytics?.replaceSettings(analysisSettings); render(); } catch { /* Preserve the last readable snapshot. */ }
+    }
+    showStorageError(`操作未保存：${error.message}。请重试或先导出库备份。`);
+  });
+  return pending;
+}
+
+async function saveLibrary(change) {
+  revision = await repository.commit({ ...change, expectedRevision: revision });
+  if (els.storageStatus) els.storageStatus.hidden = true;
 }
 
 async function chooseWatchDirectory() {
@@ -241,6 +297,7 @@ async function chooseWatchDirectory() {
   try {
     watchedDirectoryHandle = await window.showDirectoryPicker({ mode: "read" });
     lastScanSignature = "";
+    scanCache.clear();
     await saveDirectoryHandle(watchedDirectoryHandle);
     await startWatchingDirectory(true);
   } catch (error) {
@@ -309,20 +366,32 @@ async function scanWatchedDirectory({ showToast }) {
     if (signature && (signature !== lastScanSignature || showToast)) {
       const papers = [];
       const errors = [];
-      const companionMetadata = await readCompanionMarkdownMetadata(files);
+      const pendingCache = [];
+      let settings;
+      const activePaths = new Set(importFiles.map(item => item.path));
+      for (const path of scanCache.keys()) if (!activePaths.has(path)) scanCache.delete(path);
       for (const item of importFiles) {
         try {
+          const companions = files.filter(other => isMarkdownPath(other.path) && summaryGroupKey(other.path) === summaryGroupKey(item.path));
+          const itemSignature = [item, ...companions].map(other => `${other.path}:${other.file.size}:${other.file.lastModified}`).join("|");
+          if (scanCache.get(item.path) === itemSignature && !showToast) continue;
           const parsed = await parseFile(item.file, item.path);
+          const companionMetadata = await readCompanionMarkdownMetadata(companions);
           const metadata = companionMetadata.get(summaryGroupKey(item.path));
-          papers.push(...parsed.map((paper) => mergePaperMetadata(paper, metadata)));
+          const changed = parsed.map((paper) => mergePaperMetadata(paper, metadata));
+          papers.push(...changed);
+          if (parsed.analysis_settings) settings = combineSettings(settings || {}, parsed.analysis_settings);
+          pendingCache.push([item.path, itemSignature]);
         } catch (error) {
           errors.push(`${item.path}: ${error.message}`);
         }
       }
       importErrorCount = errors.length;
-      mergePapers(papers, "自动扫描", { forceToast: showToast, quietWhenNoChange: !showToast });
+      if (papers.length || settings) await mergePapers(papers, "自动扫描", { quietWhenNoChange: true, settings });
+      pendingCache.forEach(([path, value]) => scanCache.set(path, value));
+      if (showToast && !errors.length) toast(`扫描完成：已读取 ${papers.length} 篇论文`);
       if (errors.length && showToast) toast(`部分文件未导入：${errors.slice(0, 3).join("；")}`);
-      if (papers.length || errors.length < importFiles.length) lastScanSignature = signature;
+      if (!errors.length) lastScanSignature = signature;
     }
 
     lastScanAt = new Date();
@@ -450,26 +519,32 @@ async function importFiles(files, sourceLabel) {
   if (!files.length) return;
   const imported = [];
   const errors = [];
+  let settings;
 
   for (const file of files) {
     try {
       const papers = await parseFile(file, file.name);
       imported.push(...papers);
+      if (papers.analysis_settings) settings = combineSettings(settings || {}, papers.analysis_settings);
     } catch (error) {
       errors.push(`${file.name}: ${error.message}`);
     }
   }
 
-  if (imported.length) mergePapers(imported, sourceLabel, { forceToast: true });
+  if (imported.length) {
+    try { await mergePapers(imported, sourceLabel, { forceToast: true, settings }); }
+    catch (error) { errors.push(error.message); }
+  }
   if (errors.length) toast(`部分文件导入失败：${errors.join("；")}`);
 }
 
 async function parseFile(file, sourcePath = file.name) {
   const name = sourcePath.toLowerCase();
   if (name.endsWith(".json")) {
-    const payload = JSON.parse(await file.text());
+    let payload = JSON.parse(await file.text());
+    if (payload.format === "summarize-paper-migration") { PaperMigration.validate(payload); payload = PaperMigration.restore(payload); }
     const papers = normalizeJsonPayload(payload, sourcePath);
-    window.CitationAnalytics?.importSettings(payload.analysis_settings);
+    if (payload.analysis_settings) Object.defineProperty(papers, "analysis_settings", { value: payload.analysis_settings });
     return papers;
   }
   if (name.endsWith(".md") || name.endsWith(".markdown")) return [parseMarkdown(await file.text(), sourcePath)];
@@ -478,6 +553,7 @@ async function parseFile(file, sourcePath = file.name) {
 }
 
 function normalizeJsonPayload(payload, sourceFile = "summary.json") {
+  if (payload?.format === "summarize-paper-library" || payload?.papers) PaperData.validateBackup(payload);
   if (Array.isArray(payload)) {
     return payload.map((item, index) => normalizePaper({ ...item, sourceFile: item.sourceFile || sourceFile, fallbackIndex: index }));
   }
@@ -774,7 +850,8 @@ function normalizePaper(input) {
   const overview = cleanCell(input.overview || input.abstract || input.brief || buildPaperBrief(rows));
   const doi = extractDoi([input.doi, input.DOI, input["DOI"], venue, overview, sourceFile].join(" "));
   return {
-    id: input.id || `paper-${hashString(title)}`,
+    id: input.id || `paper-${crypto.randomUUID()}`,
+    record_version: input.record_version || 1,
     fingerprint,
     title,
     starred: input.starred === true,
@@ -854,7 +931,7 @@ function normalizeReferenceGroups(input) {
     const references = group.references || group.citations || group.items || group["文献"] || [];
     const normalizedReferences = (Array.isArray(references) ? references : [])
       .map(normalizeReference)
-      .filter((reference) => reference.title || reference.citation || reference.ref_id);
+      .filter((reference) => reference.title || reference.citation || reference.ref_id || reference.doi);
     const direction = cleanCell(group.direction || group.name || group.topic || group["大方向"] || "待核查/方向不明");
     const summary = cleanCell(group.summary || group.description || group.direction_summary || group["方向概括"]);
     if (!normalizedReferences.length && !summary) return null;
@@ -875,6 +952,7 @@ function normalizeReference(input) {
   let traceability = cleanCell(item.traceability || item["可追踪性"]);
   if (!traceability) traceability = doi || url ? "完整" : (title && (authors || year) ? "部分" : "待核查");
   return {
+    ...(item.record_id ? { record_id: String(item.record_id) } : {}),
     ref_id: cleanCell(item.ref_id || item.label || item.number || item["引用编号"]),
     title,
     authors,
@@ -893,55 +971,66 @@ function cleanCell(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
-function mergePapers(papers, sourceLabel, options = {}) {
-  let added = 0;
-  let updated = 0;
-  let skipped = 0;
+function combineSettings(current, incoming = {}) {
+  const a = CitationIndex.normalizeSettings(current), b = CitationIndex.normalizeSettings(incoming);
+  const identities = { ...a.identities };
+  for (const [id, entry] of Object.entries(b.identities)) identities[id] = {
+    aliases: [...new Set([...(identities[id]?.aliases || []), ...entry.aliases])],
+    records: [...new Set([...(identities[id]?.records || []), ...entry.records])],
+  };
+  return CitationIndex.normalizeSettings({ directions: { ...a.directions, ...b.directions }, identities,
+    merges: [...new Map([...a.merges, ...b.merges].map(pair => [JSON.stringify(pair), pair])).values()] });
+}
 
-  for (const paper of papers.filter(Boolean)) {
-    const sameFingerprint = library.find((item) => item.fingerprint === paper.fingerprint);
-    if (sameFingerprint) {
-      if (applyPaperMetadataUpdate(sameFingerprint, paper)) {
+async function mergePapers(papers, sourceLabel, options = {}) {
+  return runMutation(async () => {
+    let added = 0, updated = 0, skipped = 0;
+    const next = new Map(library.map(paper => [paper.id, paper]));
+    const byTitle = new Map(library.map(paper => [normalizeKey(paper.title), paper]));
+    const byDoi = new Map(library.filter(paper => paper.doi).map(paper => [CitationIndex.doiKey(paper.doi), paper]));
+    const changed = new Map();
+    for (const incoming of papers.filter(Boolean)) {
+      const doi = CitationIndex.doiKey(incoming.doi);
+      let existing = next.get(incoming.id) || (doi && byDoi.get(doi)) || byTitle.get(normalizeKey(incoming.title));
+      if (existing?.doi && doi && CitationIndex.doiKey(existing.doi) !== doi) existing = null;
+      let paper;
+      if (existing) {
+        // Reconcile occurrence IDs before comparing content, including DOI-only updates.
+        const prepared = PaperData.preparePaper(incoming, existing);
+        if (existing.fingerprint === incoming.fingerprint) {
+          paper = PaperData.clone(existing);
+          if (!applyPaperMetadataUpdate(paper, prepared)) { skipped += 1; continue; }
+        } else {
+          paper = { ...prepared, id: existing.id, importedAt: existing.importedAt,
+            updatedAt: new Date().toISOString(), starred: Boolean(existing.starred || incoming.starred),
+            reference_groups: incoming.reference_status || incoming.reference_groups?.length ? prepared.reference_groups : existing.reference_groups,
+            ...normalizeReferenceMetadata(incoming.reference_status ? incoming : existing),
+            sourceFile: mergeSourceNames(existing.sourceFile, incoming.sourceFile) };
+          for (const field of ["authors", "venue", "doi", "year", "field", "integrity", "overview"]) paper[field] ||= existing[field] || "";
+        }
         updated += 1;
       } else {
-        skipped += 1;
+        const id = next.has(incoming.id) ? `paper-${crypto.randomUUID()}` : incoming.id;
+        paper = PaperData.preparePaper({ ...incoming, id }); added += 1;
       }
-      continue;
+      next.set(paper.id, paper); changed.set(paper.id, paper);
+      byTitle.set(normalizeKey(paper.title), paper);
+      if (paper.doi) byDoi.set(CitationIndex.doiKey(paper.doi), paper);
     }
-
-    const sameTitleIndex = library.findIndex((item) => normalizeKey(item.title) === normalizeKey(paper.title));
-    if (sameTitleIndex >= 0) {
-      const existing = library[sameTitleIndex];
-      library[sameTitleIndex] = {
-        ...paper,
-        id: existing.id,
-        importedAt: existing.importedAt,
-        starred: Boolean(existing.starred || paper.starred),
-        authors: paper.authors || existing.authors || "",
-        venue: paper.venue || existing.venue || "",
-        doi: paper.doi || existing.doi || "",
-        year: paper.year || existing.year || "",
-        field: paper.field || existing.field || "",
-        integrity: paper.integrity || existing.integrity || "",
-        overview: paper.overview || existing.overview || "",
-        reference_groups: paper.reference_status || paper.reference_groups?.length ? (paper.reference_groups || []) : (existing.reference_groups || []),
-        ...normalizeReferenceMetadata(paper.reference_status ? paper : existing),
-        sourceFile: mergeSourceNames(existing.sourceFile, paper.sourceFile),
-      };
-      updated += 1;
-    } else {
-      library.unshift(paper);
-      added += 1;
+    let settings = combineSettings(analysisSettings, options.settings || papers.analysis_settings);
+    const settingsChanged = JSON.stringify(settings) !== JSON.stringify(analysisSettings);
+    if (changed.size || settingsChanged) {
+      const values = [...next.values()].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+      PaperData.validateBackup({ papers: values, analysis_settings: settings });
+      const model = CitationIndex.build(values, settings);
+      settings = { ...settings, identities: model.identities };
+      await saveLibrary({ puts: [...changed.values()], settings });
+      library = values; analysisSettings = settings; citationModel = model; dataChanged();
+      window.CitationAnalytics?.replaceSettings(settings); render();
     }
-  }
-
-  library.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
-  saveLibrary();
-  render();
-
-  if (options.forceToast || (!options.quietWhenNoChange && (added || updated))) {
-    toast(`${sourceLabel}完成：新增 ${added} 篇，更新 ${updated} 篇，跳过重复 ${skipped} 篇`);
-  }
+    if (options.forceToast || (!options.quietWhenNoChange && (added || updated))) toast(`${sourceLabel}完成：新增 ${added} 篇，更新 ${updated} 篇，跳过重复 ${skipped} 篇`);
+    return { added, updated, skipped };
+  });
 }
 
 function applyPaperMetadataUpdate(existing, incoming) {
@@ -1003,6 +1092,8 @@ function render() {
 }
 
 function renderStats() {
+  if (statsRevision === dataRevision) return;
+  statsRevision = dataRevision;
   const rows = library.flatMap((paper) => paper.rows);
   const references = library.flatMap(paperReferences);
   els.paperCount.textContent = library.length;
@@ -1023,29 +1114,22 @@ function filterRows(rows, paperOrTitle, maybeSourceFile = "") {
     ? paperOrTitle
     : { title: paperOrTitle, sourceFile: maybeSourceFile };
   const query = filters.query.toLowerCase();
+  let cached = searchCache.get(paper);
+  if (query && !cached) {
+    cached = { text: [paper.title, paper.sourceFile, paper.authors, paper.venue, paper.doi, paper.year,
+      paper.field, paper.overview, referenceSearchText(paper)].join(" ").toLowerCase(), rows: new WeakMap() };
+    searchCache.set(paper, cached);
+  }
+  const paperMatches = query && cached.text.includes(query);
   return rows.filter((row) => {
     if (filters.dimension !== "all" && row.dimension !== filters.dimension) return false;
     if (filters.type !== "all" && row.basis_type !== filters.type) return false;
     if (filters.confidence !== "all" && row.confidence !== filters.confidence) return false;
     if (!query) return true;
-    const haystack = [
-      paper.title,
-      paper.sourceFile,
-      paper.authors,
-      paper.venue,
-      paper.doi,
-      paper.year,
-      paper.field,
-      paper.overview,
-      referenceSearchText(paper),
-      row.dimension,
-      row.basis_type,
-      row.summary,
-      row.evidence,
-      row.confidence,
-      row.review_suggestion,
-    ].join(" ").toLowerCase();
-    return haystack.includes(query);
+    if (paperMatches) return true;
+    if (!cached.rows.has(row)) cached.rows.set(row, [row.dimension, row.basis_type, row.summary, row.evidence,
+      row.confidence, row.review_suggestion].join(" ").toLowerCase());
+    return cached.rows.get(row).includes(query);
   });
 }
 
@@ -1124,27 +1208,21 @@ function createStarButton(paper) {
   starButton.type = "button";
   starButton.className = "star-button";
   syncStarButton(starButton, paper);
-  starButton.addEventListener("click", (event) => {
+  starButton.addEventListener("click", async (event) => {
     event.stopPropagation();
-    const starred = toggleStoredPaperStar(paper.id);
-    if (starred === null) return;
-    paper.starred = starred;
-    syncStarButton(starButton, paper);
-    saveLibrary();
-    toast(paper.starred ? "已标记为重点" : "已取消重点标记");
+    starButton.disabled = true;
+    try { await runMutation(async () => {
+      const existing = library.find(item => item.id === paper.id);
+      if (!existing) return;
+      const next = { ...existing, starred: !existing.starred };
+      await saveLibrary({ puts: [next] });
+      existing.starred = next.starred; paper.starred = next.starred;
+      syncStarButton(starButton, paper);
+      toast(paper.starred ? "已标记为重点" : "已取消重点标记");
+    }); } catch { /* Keep the previous star on write failure. */ }
+    finally { starButton.disabled = false; }
   });
   return starButton;
-}
-
-function togglePaperStar(paper) {
-  if (!paper) return false;
-  paper.starred = !Boolean(paper.starred);
-  return paper.starred;
-}
-
-function toggleStoredPaperStar(id) {
-  const storedPaper = library.find((paper) => paper.id === id);
-  return storedPaper ? togglePaperStar(storedPaper) : null;
 }
 
 function syncStarButton(starButton, paper) {
@@ -1393,25 +1471,40 @@ function closeDetail() {
   els.detailPanel.setAttribute("aria-hidden", "true");
 }
 
-function deletePaper(id) {
+async function deletePaper(id) {
   const paper = library.find((item) => item.id === id);
   if (!paper || !confirm(`删除“${paper.title}”？监听目录里的原始文件不会被删除。`)) return;
-  library = library.filter((item) => item.id !== id);
-  saveLibrary();
-  closeDetail();
-  render();
-  toast("已从本地文献库删除");
+  try { await runMutation(async () => {
+    await saveLibrary({ deletes: [id] });
+    library = library.filter((item) => item.id !== id); dataChanged();
+    citationModel = CitationIndex.build(library, analysisSettings);
+    closeDetail(); render(); toast("已从本地文献库删除");
+  }); } catch { /* Keep the original record if the transaction fails. */ }
 }
 
-function exportLibrary() {
-  const data = JSON.stringify({ exportedAt: new Date().toISOString(), papers: library,
-    analysis_settings: window.CitationAnalytics?.getSettings(),
-  }, null, 2);
+async function exportLibrary() {
+  await mutationQueue;
+  if (!repository) { toast("数据库未能打开，无法导出完整文献库，请先恢复读取"); return; }
+  downloadJson(PaperData.backup(library, analysisSettings, revision), "summarize-paper-library");
+}
+
+async function exportMigration() {
+  await mutationQueue;
+  if (!repository) { toast("请先恢复文献库读取，再生成迁移包"); return; }
+  try {
+    const bundle = PaperMigration.build(PaperData.backup(library, analysisSettings, revision));
+    downloadJson(bundle, "summarize-paper-migration");
+    toast(`迁移包已导出：${bundle.counts.papers} 篇论文、${bundle.counts.works} 篇被引文献；数据仍保存在本地`);
+  } catch (error) { toast(`迁移包校验失败：${error.message}`); }
+}
+
+function downloadJson(payload, name) {
+  const data = JSON.stringify(payload);
   const blob = new Blob([data], { type: "application/json;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `summarize-paper-library-${new Date().toISOString().slice(0, 10)}.json`;
+  link.download = `${name}-${new Date().toISOString().slice(0, 10)}.json`;
   link.click();
   URL.revokeObjectURL(url);
 }

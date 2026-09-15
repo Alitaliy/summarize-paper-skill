@@ -6,6 +6,10 @@ __pycache__/
 .venv/
 venv/
 .env
+node_modules/
+summarize-paper-migration-*.json
+summarize-paper-library-*.json
+migration-output/
 .DS_Store
 Thumbs.db
 *.log

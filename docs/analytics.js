@@ -1,9 +1,13 @@
 (function (root) {
   "use strict";
-  const STORAGE = "summarize-paper-citation-settings-v1";
   const index = root.CitationIndex;
   const state = { query: "", direction: "", limit: 20, selected: "", model: null, settings: index.normalizeSettings() };
   let app;
+  let modelRevision = -1;
+  let settingsRevision = 0;
+  let builtSettingsRevision = -1;
+  let renderedDirection = null;
+  let selectedWorks = [];
   const els = {};
   const node = (tag, className = "", text = "") => {
     const element = document.createElement(tag);
@@ -24,8 +28,7 @@
   function init(options) {
     app = options;
     for (const id of ["libraryView", "citationsView", "libraryNav", "citationsNav", "analysisStats", "analysisCoverage", "citationQuery", "citationDirection", "citationLimit", "citationReset", "rankingCount", "rankingNote", "citationRanking", "directionChart", "directionForm", "directionMappings", "citationSelection"]) els[id] = document.getElementById(id);
-    try { state.settings = index.normalizeSettings(JSON.parse(localStorage.getItem(STORAGE) || "{}")); }
-    catch { app.notify("分析设置未能读取，已使用原始分类"); }
+    state.settings = index.normalizeSettings(app.getSettings());
     els.citationQuery.addEventListener("input", () => { state.query = els.citationQuery.value; renderResults(); });
     els.citationDirection.addEventListener("change", () => { state.direction = els.citationDirection.value; renderResults(); });
     els.citationLimit.addEventListener("change", () => { state.limit = Number(els.citationLimit.value); renderResults(); });
@@ -34,7 +37,7 @@
       els.citationQuery.value = ""; els.citationDirection.value = ""; els.citationLimit.value = "20";
       renderResults();
     });
-    els.directionForm.addEventListener("submit", event => {
+    els.directionForm.addEventListener("submit", async event => {
       event.preventDefault();
       const directions = { ...state.settings.directions };
       for (const input of els.directionMappings.querySelectorAll("input")) {
@@ -42,14 +45,9 @@
         if (label && label !== input.dataset.direction) Object.defineProperty(directions, input.dataset.direction, { value: label, enumerable: true, configurable: true });
         else delete directions[input.dataset.direction];
       }
-      if (saveSettings({ ...state.settings, directions })) app.notify("全局方向已保存，原始引用分类未改动");
+      if (await saveSettings({ ...state.settings, directions })) app.notify("全局方向已保存，原始引用分类未改动");
     });
     root.addEventListener("hashchange", route);
-    root.addEventListener("storage", event => {
-      if (event.key !== STORAGE && event.key !== null) return;
-      try { state.settings = index.normalizeSettings(JSON.parse(localStorage.getItem(STORAGE) || "{}")); refresh(); }
-      catch { app.notify("分析设置同步失败，请刷新后重试"); }
-    });
     route();
   }
 
@@ -66,7 +64,10 @@
 
   function refresh() {
     if (!app || !active()) return;
-    state.model = index.build(app.getLibrary(), state.settings);
+    const revision = app.getRevision();
+    if (state.model && modelRevision === revision && builtSettingsRevision === settingsRevision) return;
+    state.model = app.getModel?.() || index.build(app.getLibrary(), state.settings);
+    modelRevision = revision; builtSettingsRevision = settingsRevision; renderedDirection = null;
     const model = state.model;
     const stats = [["来源论文 · 去重", model.sources.length], ["有引用数据", model.sources.filter(s => s.hasReferences).length],
       ["被引文献 · 去重", model.works.length], ["引用关系", model.edgeCount], ["研究方向", model.directions.length]];
@@ -75,7 +76,8 @@
     }));
     const coverage = Object.fromEntries(["complete", "partial", "unavailable", "unknown"].map(status => [status, model.sources.filter(s => s.status === status).length]));
     els.analysisCoverage.textContent = `基于当前浏览器文献库：引用整理完整 ${coverage.complete} 篇，部分 ${coverage.partial} 篇，不可读 ${coverage.unavailable} 篇，状态未知 ${coverage.unknown} 篇。` +
-      `排名只反映已导入的引用；参考文献中的软件、文档和网页也保留。${model.importedCount > model.sources.length ? ` ${model.importedCount} 条来源记录已合为 ${model.sources.length} 篇。` : ""}`;
+      `排名只反映已导入的引用；参考文献中的软件、文档和网页也保留。${model.importedCount > model.sources.length ? ` ${model.importedCount} 条来源记录已合为 ${model.sources.length} 篇。` : ""}` +
+      (model.unresolvedMerges.length ? ` ${model.unresolvedMerges.length} 条历史合并暂无法确定对应文献，记录已保留，可在文献识别与纠错中撤销后重新确认。` : "");
     if (!model.directions.some(d => d.name === state.direction)) state.direction = "";
     const all = node("option", "", "全部方向"); all.value = "";
     els.citationDirection.replaceChildren(all, ...model.directions.map(direction => {
@@ -89,6 +91,7 @@
   function renderResults() {
     if (!state.model) return;
     const works = index.select(state.model, state);
+    selectedWorks = works;
     const selected = works.find(work => work.id === state.selected) || works[0];
     state.selected = selected?.id || "";
     const shown = state.limit ? works.slice(0, state.limit) : works;
@@ -99,10 +102,13 @@
     const max = works[0]?.count || 1;
     shown.forEach((work, position) => {
       const row = action("", "citation-rank", () => {
-        state.selected = work.id; renderResults();
+        state.selected = work.id;
+        for (const item of els.citationRanking.children) item.setAttribute("aria-pressed", String(item.dataset.workId === work.id));
+        renderSelection(selectedWorks.find(item => item.id === work.id));
         if (root.matchMedia?.("(max-width: 900px)").matches) els.citationSelection.scrollIntoView({ block: "start" });
       });
       row.setAttribute("aria-pressed", String(work.id === state.selected));
+      row.dataset.workId = work.id;
       row.setAttribute("aria-label", `${work.title}，被 ${work.count} 篇不同论文引用`);
       row.title = work.title;
       const content = node("span", "rank-content");
@@ -114,7 +120,7 @@
       row.append(node("span", "rank-position", String(position + 1).padStart(2, "0")), content, count);
       els.citationRanking.append(row);
     });
-    renderDirections();
+    if (renderedDirection !== state.direction) { renderDirections(); renderedDirection = state.direction; }
     renderSelection(selected);
   }
 
@@ -245,6 +251,16 @@
   function renderMergeControls(panel, work) {
     const details = node("details", "analysis-settings");
     details.append(node("summary", "", "文献识别与纠错"));
+    let filled = false;
+    details.addEventListener("toggle", () => {
+      if (!details.open || filled) return;
+      filled = true;
+      fillMergeControls(details, work);
+    });
+    panel.append(details);
+  }
+
+  function fillMergeControls(details, work) {
     details.append(small(`${work.manual ? "含人工确认的合并。" : ""}识别依据：${[...work.methods].join("、")}。${work.review ? "部分条目依赖书目信息或存在歧义，请核对原文。" : ""}`));
     const variants = node("ul", "reference-variants");
     const labels = [...new Set(work.variants.map(ref => [ref.title || ref.citation || ref.ref_id, ref.year, ref.doi].filter(Boolean).join(" · ")))];
@@ -256,34 +272,42 @@
       if (other.id === work.id) continue;
       const option = node("option", "", `${shorten(other.title, 85)} · ${other.count} 篇`); option.value = other.id; select.append(option);
     }
-    const merge = action("确认合并", "button", () => {
+    const merge = action("确认合并", "button", async () => {
       if (!select.value) return;
       const other = state.model.works.find(item => item.id === select.value);
       if (!other || !root.confirm(`将以下两条记录按同一文献统计？\n\n${work.title}\n${other.title}\n\n可撤销，原始引用不会修改。`)) return;
       state.selected = work.id < other.id ? work.id : other.id;
-      if (saveSettings({ ...state.settings, merges: [...state.settings.merges, [work.id, other.id]] })) app.notify("文献已合并，同一来源论文仍只计一次");
+      if (await saveSettings({ ...state.settings, merges: [...state.settings.merges, [work.id, other.id]] })) app.notify("文献已合并，同一来源论文仍只计一次");
     });
     details.append(label, select, merge);
-    if (state.settings.merges.length) details.append(action("撤销最近一次合并", "button", () => {
-      if (saveSettings({ ...state.settings, merges: state.settings.merges.slice(0, -1) })) app.notify("已撤销最近一次文献合并");
+    if (state.settings.merges.length) details.append(action("撤销最近一次合并", "button", async () => {
+      if (await saveSettings({ ...state.settings, merges: state.settings.merges.slice(0, -1) })) app.notify("已撤销最近一次文献合并");
     }));
-    panel.append(details);
   }
 
-  function saveSettings(settings) {
-    const next = index.normalizeSettings(settings);
-    try { localStorage.setItem(STORAGE, JSON.stringify(next)); }
+  async function saveSettings(settings) {
+    let next = index.normalizeSettings(settings);
+    try { next = await app.saveSettings(next) || next; }
     catch { app.notify("分析设置未能保存，请检查浏览器存储空间后重试"); return false; }
-    state.settings = next; refresh(); return true;
+    replaceSettings(next); refresh(); return true;
   }
 
-  function importSettings(input) {
-    if (!input || typeof input !== "object" || input.version !== 1) return;
+  async function importSettings(input) {
+    if (!input || typeof input !== "object" || ![1, 2].includes(input.version)) return;
     const incoming = index.normalizeSettings(input);
     const merges = [...new Map([...state.settings.merges, ...incoming.merges].map(pair => [JSON.stringify(pair), pair])).values()];
-    const next = index.normalizeSettings({ directions: { ...state.settings.directions, ...incoming.directions }, merges });
+    const identities = { ...state.settings.identities };
+    for (const [id, entry] of Object.entries(incoming.identities)) identities[id] = {
+      aliases: [...new Set([...(identities[id]?.aliases || []), ...entry.aliases])],
+      records: [...new Set([...(identities[id]?.records || []), ...entry.records])],
+    };
+    const next = index.normalizeSettings({ directions: { ...state.settings.directions, ...incoming.directions }, merges, identities });
     if (JSON.stringify(next) === JSON.stringify(state.settings)) return;
-    if (!saveSettings(next)) throw new Error("分析设置未能保存");
+    if (!await saveSettings(next)) throw new Error("分析设置未能保存");
   }
-  root.CitationAnalytics = { init, refresh, getSettings: () => index.normalizeSettings(state.settings), importSettings };
+  function replaceSettings(input) {
+    const next = index.normalizeSettings(input);
+    if (JSON.stringify(next) !== JSON.stringify(state.settings)) { state.settings = next; settingsRevision += 1; }
+  }
+  root.CitationAnalytics = { init, refresh, replaceSettings, getSettings: () => index.normalizeSettings(state.settings), importSettings };
 })(window);

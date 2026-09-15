@@ -43,7 +43,43 @@
     const merges = Array.isArray(input?.merges) ? input.merges
       .filter(pair => Array.isArray(pair) && pair.length === 2 && pair.every(id => typeof id === "string" && id.length))
       .map(pair => pair.slice()) : [];
-    return { version: 1, directions, merges };
+    const identities = Object.fromEntries(Object.entries(input?.identities || {})
+      .filter(([id, entry]) => id.startsWith("work:") && entry && typeof entry === "object")
+      .map(([id, entry]) => [id, { aliases: [...new Set((Array.isArray(entry.aliases) ? entry.aliases : []).filter(x => typeof x === "string"))],
+        records: [...new Set((Array.isArray(entry.records) ? entry.records : []).filter(x => typeof x === "string"))] }]));
+    return { version: 2, directions, merges, identities };
+  }
+
+  // Record anchors survive DOI/title enrichment; aliases also recover v1 merge rules.
+  // A historical ID shared by now-conflicting entities is ambiguous, never a merge instruction.
+  function stableEntities(referenceIndex, settings) {
+    const identities = JSON.parse(JSON.stringify(settings.identities)), aliases = new Map(), anchors = new Map();
+    const add = (map, key, value) => { if (!map.has(key)) map.set(key, new Set()); map.get(key).add(value); };
+    for (const [id, entry] of Object.entries(identities)) {
+      entry.aliases.forEach(alias => add(aliases, alias, id)); entry.records.forEach(record => add(anchors, record, id));
+    }
+    const used = new Set(), resolution = new Map(), groups = new Map();
+    for (const group of [...referenceIndex.groups.values()].sort((a, b) => a.id.localeCompare(b.id))) {
+      const records = [...new Set(group.entries.map(entry => entry.record.record_id).filter(Boolean))].sort();
+      const candidates = [...new Set(records.flatMap(record => [...(anchors.get(record) || [])]))].sort();
+      const aliasMatches = [...(aliases.get(group.id) || [])].sort();
+      let id = [...candidates, ...aliasMatches].find(candidate => !used.has(candidate));
+      id ||= records.length ? `work:record:${records[0]}` : group.id;
+      if (used.has(id)) id = group.id;
+      used.add(id);
+      const historical = [...new Set([...candidates, ...aliasMatches])];
+      for (const alias of [group.id, id, ...historical]) add(resolution, alias, id);
+      if (!Object.hasOwn(identities, id)) identities[id] = { aliases: [], records: [] };
+      identities[id].aliases = [...new Set([...identities[id].aliases, group.id])].sort();
+      identities[id].records = [...new Set([...identities[id].records, ...records])].sort();
+      groups.set(id, { ...group, id });
+    }
+    // Resolve old bibliography IDs after their records acquire stronger identifiers.
+    for (const [id, entry] of Object.entries(identities)) {
+      const targets = resolution.get(id);
+      if (targets) for (const alias of entry.aliases) for (const target of targets) add(resolution, alias, target);
+    }
+    return { groups, identities, resolve: id => resolution.get(id)?.size === 1 ? [...resolution.get(id)][0] : "" };
   }
 
   function resolveEntities(records, prefix) {
@@ -129,7 +165,7 @@
         }
       }
     });
-    const referenceIndex = resolveEntities(citations, "work");
+    const referenceIndex = stableEntities(resolveEntities(citations, "work"), settings);
     // User-confirmed merges operate on derived entities; source bibliographies remain untouched.
     const parents = new Map([...referenceIndex.groups.keys()].map(id => [id, id]));
     const find = id => {
@@ -138,8 +174,10 @@
       while (parents.get(id) !== id) { const next = parents.get(id); parents.set(id, node); id = next; }
       return node;
     };
-    for (const [a, b] of settings.merges) {
-      if (!parents.has(a) || !parents.has(b)) continue;
+    const unresolvedMerges = [];
+    for (const pair of settings.merges) {
+      const [a, b] = pair.map(referenceIndex.resolve);
+      if (!parents.has(a) || !parents.has(b)) { unresolvedMerges.push(pair); continue; }
       const x = find(a), y = find(b);
       if (x !== y) parents.set(x < y ? y : x, x < y ? x : y);
     }
@@ -160,7 +198,7 @@
         work.directions.add(entry.direction);
         if (!work.sources.has(entry.sourceId)) work.sources.set(entry.sourceId, { source: sources.get(entry.sourceId), contexts: [] });
         const contexts = work.sources.get(entry.sourceId).contexts;
-        const context = { paperId: entry.paperId, direction: entry.direction, originalDirection: entry.originalDirection,
+        const context = { paperId: entry.paperId, recordId: ref.record_id || "", direction: entry.direction, originalDirection: entry.originalDirection,
           refId: clean(ref.ref_id), relation: clean(ref.relation), basis: clean(ref.classification_basis), citation: clean(ref.citation) };
         if (!contexts.some(existing => JSON.stringify(existing) === JSON.stringify(context))) contexts.push(context);
       }
@@ -169,6 +207,11 @@
       work.title ||= clean(work.variants[0]?.citation) || `题名待核查 ${clean(work.variants[0]?.ref_id)}`;
       work.count = work.sources.size;
       work.manual = work.memberIds.length > 1;
+      work.searchText = keyText([work.title, work.authors, work.year, work.doi, work.url,
+        ...work.variants.map(ref => [ref.title, ref.authors, ref.doi, ref.citation].join(" "))].join(" "));
+      work.allSources = [...work.sources.values()];
+      work.directionSources = new Map([...work.directions].map(direction => [direction,
+        work.allSources.filter(edge => edge.contexts.some(context => context.direction === direction))]));
     }
     const directions = new Map();
     for (const work of works.values()) for (const [sourceId, edge] of work.sources) {
@@ -179,6 +222,7 @@
       }
     }
     return { works: [...works.values()].sort(compareWorks), sources: [...sources.values()],
+      identities: referenceIndex.identities, unresolvedMerges,
       directions: [...directions.values()].sort((a, b) => b.works.size - a.works.size || a.name.localeCompare(b.name)),
       rawDirections: [...rawDirections].sort(),
       edgeCount: [...works.values()].reduce((total, work) => total + work.count, 0),
@@ -188,12 +232,11 @@
   function compareWorks(a, b) { return b.count - a.count || a.title.localeCompare(b.title) || a.id.localeCompare(b.id); }
   function select(model, { query = "", direction = "" } = {}) {
     const needle = keyText(query);
-    return model.works.map(work => {
-      const sources = [...work.sources.values()].filter(edge => !direction || edge.contexts.some(c => c.direction === direction));
+    const selected = model.works.filter(work => !needle || work.searchText.includes(needle)).map(work => {
+      const sources = direction ? (work.directionSources.get(direction) || []) : work.allSources;
       return { ...work, globalCount: work.count, count: sources.length, visibleSources: sources };
-    }).filter(work => work.count && (!needle || keyText([work.title, work.authors, work.year, work.doi, work.url,
-      ...work.variants.map(ref => [ref.title, ref.authors, ref.doi, ref.citation].join(" "))].join(" ")).includes(needle)))
-      .sort(compareWorks);
+    }).filter(work => work.count);
+    return direction ? selected.sort(compareWorks) : selected;
   }
   const api = { build, select, normalizeSettings, doiKey, bibliographyKey };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

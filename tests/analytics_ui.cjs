@@ -1,3 +1,4 @@
+(async () => {
 // Exercise the real UI controllers with a minimal DOM and durable storage across fresh sessions.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -13,7 +14,7 @@ class Element {
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this._text = ''; this.children = [...children]; }
   addEventListener(type, handler) { this.listeners[type] = handler; }
-  fire(type, extra = {}) { this.listeners[type]?.({ target: this, preventDefault() {}, ...extra }); }
+  fire(type, extra = {}) { return this.listeners[type]?.({ target: this, preventDefault() {}, ...extra }); }
   querySelectorAll(tagName) { return descendants(this).filter(el => el.tagName === tagName); }
 }
 function descendants(el) { return el.children.flatMap(child => [child, ...descendants(child)]); }
@@ -28,6 +29,7 @@ const fixture = [
   ] },
 ];
 const store = new Map();
+let libraryRevision = 1, saveFails = false;
 const library = JSON.parse(JSON.stringify(fixture));
 const before = JSON.stringify(library);
 function session() {
@@ -42,10 +44,11 @@ function session() {
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   for (const file of ['citation-index.js', 'analytics.js']) vm.runInContext(fs.readFileSync(path.join(root, 'docs', file), 'utf8'), sandbox);
-  sandbox.CitationAnalytics.init({ getLibrary: () => library, openPaper: id => opened.push(id), notify: message => messages.push(message) });
+  sandbox.CitationAnalytics.init({ getLibrary: () => library, getRevision: () => libraryRevision, getSettings: () => JSON.parse(store.get('settings') || '{}'), saveSettings: async value => { if (saveFails) throw new Error('quota'); store.set('settings', JSON.stringify(value)); }, openPaper: id => opened.push(id), notify: message => messages.push(message) });
   return { sandbox, elements, callbacks, opened, messages };
 }
 
+function openMerge() { const details = byClass(elements.citationSelection, 'analysis-settings')[0]; details.open = true; details.fire('toggle'); }
 let { sandbox, elements, callbacks, opened } = session();
 assert.equal(elements.libraryView.hidden, true, 'Direct subpage links must open analytics');
 assert.equal(elements.citationsNav.attributes['aria-current'], 'page');
@@ -68,24 +71,26 @@ assert.equal(byClass(elements.citationSelection, 'citation-source').length, 1);
 
 // Save a direction alias, then reconstruct an entirely fresh controller from local storage.
 const mapping = elements.directionMappings.querySelectorAll('input').find(el => el.dataset.direction === 'Methods');
-mapping.value = '方法'; elements.directionForm.fire('submit');
-assert.ok(store.get('summarize-paper-citation-settings-v1').includes('Methods'));
+mapping.value = '方法'; await elements.directionForm.fire('submit');
+assert.ok(store.get('settings').includes('Methods'));
 ({ sandbox, elements, callbacks } = session());
 assert.equal(elements.directionChart.children.length, 1, 'Saved direction mapping survives a page reload');
 assert.equal(elements.directionMappings.querySelectorAll('input').find(el => el.dataset.direction === 'Methods').value, '方法');
 
 // Merge references shared by the same source: 2 + 1 remains 2, not 3.
+openMerge();
 const mergeSelect = descendants(elements.citationSelection).find(el => el.id === 'mergeCitation');
 mergeSelect.value = mergeSelect.children.find(el => el.value).value;
-descendants(elements.citationSelection).find(el => el.tagName === 'button' && el.textContent === '确认合并').fire('click');
+await descendants(elements.citationSelection).find(el => el.tagName === 'button' && el.textContent === '确认合并').fire('click');
 assert.equal(elements.citationRanking.children.length, 1);
 assert.equal(byClass(elements.citationSelection, 'selected-metric')[0].textContent, '2篇不同的来源论文');
 ({ sandbox, elements, callbacks } = session());
 assert.equal(elements.citationRanking.children.length, 1, 'Manual merge survives a fresh session');
 const exported = JSON.parse(JSON.stringify(sandbox.CitationAnalytics.getSettings()));
-descendants(elements.citationSelection).find(el => el.tagName === 'button' && el.textContent === '撤销最近一次合并').fire('click');
+openMerge();
+await descendants(elements.citationSelection).find(el => el.tagName === 'button' && el.textContent === '撤销最近一次合并').fire('click');
 assert.equal(elements.citationRanking.children.length, 2);
-sandbox.CitationAnalytics.importSettings(exported);
+await sandbox.CitationAnalytics.importSettings(exported);
 assert.equal(elements.citationRanking.children.length, 1, 'Exported settings can be imported again');
 assert.equal(JSON.stringify(library), before, 'UI operations must not alter original paper or reference records');
 
@@ -93,16 +98,18 @@ assert.equal(JSON.stringify(library), before, 'UI operations must not alter orig
 sandbox.location.hash = '#/library'; callbacks.hashchange();
 assert.equal(elements.libraryView.hidden, false);
 assert.equal(elements.citationsView.hidden, true);
-library.splice(0);
+library.splice(0); libraryRevision++;
 sandbox.location.hash = '#/citations'; callbacks.hashchange();
 assert.ok(elements.citationRanking.textContent.includes('还没有可分析的引用'));
-library.push(...JSON.parse(JSON.stringify(fixture)));
+library.push(...JSON.parse(JSON.stringify(fixture))); libraryRevision++;
 sandbox.CitationAnalytics.refresh();
 assert.equal(elements.citationRanking.children.length, 1);
 
 // Storage failures must not present unsaved mappings as saved changes.
-sandbox.localStorage.setItem = () => { throw new Error('quota'); };
+saveFails = true;
 const failed = elements.directionMappings.querySelectorAll('input')[0];
-failed.value = 'unsaved'; elements.directionForm.fire('submit');
+failed.value = 'unsaved'; await elements.directionForm.fire('submit');
 assert.ok(!JSON.stringify(sandbox.CitationAnalytics.getSettings()).includes('unsaved'));
 console.log('Analytics UI: routing, ranking, filtering, graph links, source details, mapping/merge persistence, undo, import, and storage failures passed.');
+
+})().catch(error => { console.error(error); process.exitCode = 1; });

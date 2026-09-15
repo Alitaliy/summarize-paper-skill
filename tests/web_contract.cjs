@@ -1,3 +1,4 @@
+(async () => {
 // Tests the deployed parser functions with independently decoded XLSX cell matrices.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -20,14 +21,15 @@ class FakeElement {
   }
   setAttribute(name, value) { this.attributes[name] = String(value); }
   addEventListener(type, listener) { this.listeners[type] = listener; }
-  click() {
+  async click() {
     let stopped = false;
-    this.listeners.click({ stopPropagation() { stopped = true; } });
+    await this.listeners.click({ stopPropagation() { stopped = true; } });
     return stopped;
   }
 }
 const storedValues = {};
 const sandbox = {
+  crypto: require("node:crypto").webcrypto, setTimeout, clearTimeout,
   document: { addEventListener() {}, createElement: tagName => new FakeElement(tagName) },
   window: { XLSX: { utils: { sheet_to_json: sheet => sheet } } },
   localStorage: {
@@ -36,11 +38,14 @@ const sandbox = {
   },
 };
 vm.createContext(sandbox);
-vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/app.js'), 'utf8'), sandbox);
+for (const file of ['data-model.js', 'library-store.js', 'citation-index.js', 'app.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs', file), 'utf8'), sandbox);
 const api = vm.runInContext(`({normalizeJsonPayload, parseMarkdown, parseWorkbookReferenceGroups,
   parseWorkbookReferenceMetadata, normalizeReferenceMetadata, rowFromHeaders, applyPaperMetadataUpdate,
   referenceStatusText, selectPreferredSummaryFiles, mergePaperMetadata, normalizePaper,
-  createStarButton, togglePaperStar, toggleStoredPaperStar, mergePapers, loadLibrary})`, sandbox);
+  createStarButton, mergePapers, loadLibrary})`, sandbox);
+sandbox.testRepository = await vm.runInContext("LibraryStore.open({ normalizePaper })", sandbox);
+vm.runInContext("repository = testRepository;", sandbox);
+await api.loadLibrary();
 const plain = value => JSON.parse(JSON.stringify(value));
 const input = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8'));
 const expected = api.normalizeJsonPayload(input)[0];
@@ -94,18 +99,18 @@ vm.runInContext('library = [testStoredPaper]; toast = message => { testToast = m
 const starButton = api.createStarButton(visibleCopy);
 assert.equal(starButton.textContent, '☆');
 assert.equal(starButton.attributes['aria-pressed'], 'false');
-assert.equal(starButton.click(), true, 'Star clicks must not open the paper card');
+assert.equal(await starButton.click(), true, 'Star clicks must not open the paper card');
 assert.equal(unstarredPaper.starred, true, 'The stored paper record must be updated, not only its visible copy');
 assert.equal(starButton.textContent, '★');
 assert.ok(starButton.className.includes('is-starred'));
 assert.equal(starButton.attributes['aria-pressed'], 'true');
-assert.equal(JSON.parse(storedValues['summarize-paper-library-v2'])[0].starred, true);
-assert.equal(starButton.click(), true);
+assert.equal(JSON.parse(storedValues['summarize-paper-library-v3']).papers[0].starred, true);
+assert.equal(await starButton.click(), true);
 assert.equal(unstarredPaper.starred, false);
-assert.equal(JSON.parse(storedValues['summarize-paper-library-v2'])[0].starred, false);
-starButton.click();
+assert.equal(JSON.parse(storedValues['summarize-paper-library-v3']).papers[0].starred, false);
+await starButton.click();
 vm.runInContext('library = [];', sandbox);
-api.loadLibrary();
+await api.loadLibrary();
 assert.equal(vm.runInContext('library[0].starred', sandbox), true, 'The star must survive a save and reload cycle');
 
 const importedStar = api.normalizePaper({ ...input, starred: true });
@@ -119,10 +124,12 @@ const replacement = api.normalizePaper({
 });
 sandbox.testExisting = importedStar;
 vm.runInContext('library = [testExisting]; render = () => {};', sandbox);
-api.mergePapers([replacement], 'test', { quietWhenNoChange: true });
+await api.mergePapers([replacement], 'test', { quietWhenNoChange: true });
 assert.equal(vm.runInContext('library[0].starred', sandbox), true, 'A local star must survive a same-title re-import');
 const css = fs.readFileSync(path.join(__dirname, '../docs/styles.css'), 'utf8');
 const starStyles = css.match(/\.star-button\s*\{([^}]*)\}/)?.[1] || '';
 assert.match(starStyles, /border:\s*0;/, 'The star must not have a surrounding border');
 assert.match(starStyles, /background:\s*transparent;/, 'The star must not have a surrounding fill');
 console.log('Web readers preserve claims, citation groups, coverage, and update behavior.');
+
+})().catch(error => { console.error(error); process.exitCode = 1; });
