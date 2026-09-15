@@ -4,9 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>论文总结管理器</title>
-    <meta name="theme-color" content="#142d36" />
+    <meta name="theme-color" content="#14213a" />
     <link rel="stylesheet" href="./styles.css?v=20260915-cloud1" />
     <link rel="stylesheet" href="./analytics.css?v=20260914-analytics" />
+    <link rel="stylesheet" href="./workspace.css?v=20260915-design1" />
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
     <script src="./data-model.js?v=20260915-cloud1" defer></script>
     <script src="./library-store.js?v=20260915-cloud1" defer></script>
@@ -21,36 +22,45 @@
     <script src="./app.js?v=20260915-cloud1" defer></script>
   </head>
   <body>
-    <header class="app-header">
+    <aside class="app-sidebar" aria-label="工作台">
       <div class="app-brand">
         <svg class="brand-mark" viewBox="0 0 40 40" fill="none" aria-hidden="true"><rect x="8" y="6" width="24" height="28" rx="4" stroke="currentColor" stroke-width="1.8"/><path d="M14 6v28M20 14h6M20 20h6M20 26h3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         <div>
-          <p class="eyebrow">summarize-paper library</p>
-          <h1>论文总结管理器</h1>
+          <p class="brand-name">论文总结</p>
+          <p class="eyebrow">summarize paper</p>
         </div>
       </div>
+      <nav class="page-nav" aria-label="页面导航">
+        <a href="#/library" id="libraryNav" aria-current="page"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.6"/></svg>文献库</a>
+        <a href="#/citations" id="citationsNav"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 7h4m-4 10h4m0-10v10m0-5h4" stroke="currentColor" stroke-width="1.6"/><rect x="3" y="4" width="5" height="6" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="3" y="14" width="5" height="6" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="16" y="9" width="5" height="6" rx="1.5" stroke="currentColor" stroke-width="1.6"/></svg>全局引用分析</a>
+      </nav>
+      <div class="sidebar-bottom">
+        <p class="sidebar-label">账号与同步</p>
+        <button id="cloudButton" class="button" type="button">云端同步</button>
+      </div>
+    </aside>
+    <header class="app-header">
+      <h1>文献工作台</h1>
       <div class="header-actions">
-        <button id="watchButton" class="button primary"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3V7Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 11v5m-2.5-2.5h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>监听文件夹</button>
-        <label class="button">
+        <button id="watchButton" class="button"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3V7Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 11v5m-2.5-2.5h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>监听文件夹</button>
+        <label class="button primary">
           <input id="fileInput" type="file" accept=".xlsx,.xls,.json,.md,.markdown" multiple />
           <svg class="ui-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M4 15v5h16v-5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
           导入文件
         </label>
-        <button id="pasteButton" class="button">粘贴 JSON</button>
-        <button id="exportButton" class="button">导出库</button>
-        <button id="migrationButton" class="button">导出迁移包</button>
-        <button id="cloudButton" class="button" type="button">云端同步</button>
+        <button id="pasteButton" class="button quiet">粘贴 JSON</button>
+        <div class="header-export">
+          <button id="exportButton" class="button quiet">导出库</button>
+          <button id="migrationButton" class="button quiet">导出迁移包</button>
+        </div>
       </div>
     </header>
 
     <main class="app-shell">
       <p id="storageStatus" class="storage-status" role="alert" hidden></p>
       <p id="cloudBanner" class="cloud-banner" role="status" hidden></p>
-      <nav class="page-nav" aria-label="页面导航">
-        <a href="#/library" id="libraryNav" aria-current="page">文献库</a>
-        <a href="#/citations" id="citationsNav">全局引用分析 <span aria-hidden="true">↗</span></a>
-      </nav>
       <div id="libraryView">
+      <div class="library-overview">
       <section id="watchPanel" class="watch-panel">
         <div class="watch-copy">
           <strong id="watchTitle">未监听输出目录</strong>
@@ -82,10 +92,11 @@
         </article>
       </section>
 
+      </div>
       <section class="library-board" aria-label="文献缩略卡片墙">
         <section class="library-head">
           <div>
-            <h2>文献卡片</h2>
+            <h2>我的文献</h2>
             <p id="resultSummary">暂无文献</p>
           </div>
         </section>
