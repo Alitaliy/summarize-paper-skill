@@ -2,11 +2,14 @@
   "name": "summarize-paper-skill",
   "private": true,
   "scripts": {
-    "test": "node tests/citation_index.cjs && node tests/analytics_ui.cjs && node tests/local_data.cjs && node tests/storage.cjs && node tests/app_storage.cjs && node tests/cloud_schema.cjs",
+    "test": "node tests/citation_index.cjs && node tests/analytics_ui.cjs && node tests/local_data.cjs && node tests/storage.cjs && node tests/app_storage.cjs && node tests/cloud_schema.cjs && node tests/cloud_sync.cjs && node tests/cloud_store.cjs && node tests/cloud_ui.cjs && node tests/cloud_app.cjs",
     "check": "node scripts/check-scripts.cjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",
     "fake-indexeddb": "6.2.5"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.116.0"
   }
 }

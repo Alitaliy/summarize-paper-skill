@@ -43,7 +43,7 @@ async function session(storage, indexedDB = new IDBFactory()) {
   const api = vm.runInContext('({normalizePaper, mergePapers, loadLibrary, filterRows, scanWatchedDirectory, getLibrary: () => library, getSettings: () => analysisSettings, getRepository: () => repository})', context);
   return { context, elements, api, callbacks };
 }
-(async () => {
+if (require.main === module) (async () => {
   const storage = new Map([['summarize-paper-library-v2', JSON.stringify([original])]]);
   const { context, elements, api, callbacks } = await session(storage);
   const star = descendants(elements.paperGrid).find(element => element.className.includes('star-button'));
@@ -114,3 +114,4 @@ async function session(storage, indexedDB = new IDBFactory()) {
   api.getRepository().close();
   console.log('App integration: stars, rollback, no-op imports, stable metadata IDs, search/index caching, lazy rendering and incremental watch passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
+module.exports = { session, descendants };

@@ -9,3 +9,5 @@
 *.json text eol=lf
 *.xlsx binary
 *.zip binary
+# Preserve intentional whitespace in the unmodified upstream SDK bundle.
+docs/vendor/supabase-*.js -whitespace

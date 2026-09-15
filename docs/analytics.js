@@ -8,6 +8,8 @@
   let builtSettingsRevision = -1;
   let renderedDirection = null;
   let selectedWorks = [];
+  let remoteRequest = 0;
+  let remoteTimer = null;
   const els = {};
   const node = (tag, className = "", text = "") => {
     const element = document.createElement(tag);
@@ -75,7 +77,7 @@
       const card = node("article", "analysis-stat"); card.append(node("span", "", label), node("strong", "", String(value))); return card;
     }));
     const coverage = Object.fromEntries(["complete", "partial", "unavailable", "unknown"].map(status => [status, model.sources.filter(s => s.status === status).length]));
-    els.analysisCoverage.textContent = `基于当前浏览器文献库：引用整理完整 ${coverage.complete} 篇，部分 ${coverage.partial} 篇，不可读 ${coverage.unavailable} 篇，状态未知 ${coverage.unknown} 篇。` +
+    els.analysisCoverage.textContent = `基于当前文献库：引用整理完整 ${coverage.complete} 篇，部分 ${coverage.partial} 篇，不可读 ${coverage.unavailable} 篇，状态未知 ${coverage.unknown} 篇。` +
       `排名只反映已导入的引用；参考文献中的软件、文档和网页也保留。${model.importedCount > model.sources.length ? ` ${model.importedCount} 条来源记录已合为 ${model.sources.length} 篇。` : ""}` +
       (model.unresolvedMerges.length ? ` ${model.unresolvedMerges.length} 条历史合并暂无法确定对应文献，记录已保留，可在文献识别与纠错中撤销后重新确认。` : "");
     if (!model.directions.some(d => d.name === state.direction)) state.direction = "";
@@ -88,9 +90,9 @@
     renderResults();
   }
 
-  function renderResults() {
+  function renderResults(remoteWorks = null) {
     if (!state.model) return;
-    const works = index.select(state.model, state);
+    const works = remoteWorks || index.select(state.model, state);
     selectedWorks = works;
     const selected = works.find(work => work.id === state.selected) || works[0];
     state.selected = selected?.id || "";
@@ -122,6 +124,39 @@
     });
     if (renderedDirection !== state.direction) { renderDirections(); renderedDirection = state.direction; }
     renderSelection(selected);
+    if (!remoteWorks) requestRemoteRanking(works);
+  }
+
+  function requestRemoteRanking(localWorks) {
+    const request = ++remoteRequest, revision = modelRevision;
+    if (!app.getRemoteAnalysis || !root.setTimeout) return;
+    root.clearTimeout?.(remoteTimer);
+    // Search retains the existing Unicode/punctuation matching against the cached
+    // bibliography. Unfiltered/direction rankings read DISTINCT counts from SQL.
+    if (state.query.trim()) return;
+    const direction = state.direction, limit = state.limit;
+    remoteTimer = root.setTimeout(async () => {
+      try {
+        const rows = [];
+        const count = limit || localWorks.length;
+        for (let offset = 0; offset < count; offset += 100) {
+          const page = await app.getRemoteAnalysis({ selected_direction: direction, search_query: "", page_size: Math.min(100, count - offset), page_offset: offset });
+          if (!page || request !== remoteRequest || revision !== modelRevision || !active()) return;
+          rows.push(...page.items);
+          if (page.items.length < Math.min(100, count - offset)) break;
+        }
+        if (!count || rows.length !== Math.min(count, localWorks.length)) return;
+        const byId = new Map(localWorks.map(work => [work.id, work]));
+        const resolved = rows.map(row => {
+          const local = byId.get(row.work_id);
+          if (!local || local.count !== Number(row.cited_by) || local.globalCount !== Number(row.global_cited_by)) throw new Error("云端索引与本机缓存版本不一致");
+          return { ...local, count: Number(row.cited_by), globalCount: Number(row.global_cited_by) };
+        });
+        const shownIds = new Set(resolved.map(work => work.id));
+        renderResults([...resolved, ...localWorks.filter(work => !shownIds.has(work.id))]);
+        els.rankingNote.textContent += " 已读取云端统计。";
+      } catch { /* Keep the complete local ranking while offline or waiting for sync. */ }
+    }, 250);
   }
 
   function renderDirections() {

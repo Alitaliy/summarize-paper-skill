@@ -23,6 +23,20 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
+.cloud-banner { padding: 12px 18px; background: var(--gold-soft); border-radius: 10px; color: #76540d; font-size: .875rem; }
+.cloud-dialog { width: min(560px, calc(100% - 32px)); max-height: calc(100dvh - 48px); padding: 28px; border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); background: var(--paper); color: var(--ink); }
+.cloud-dialog::backdrop { background: #112b36aa; backdrop-filter: blur(3px); }
+.cloud-account { margin: 16px 0 10px; color: var(--muted); overflow-wrap: anywhere; }
+.cloud-message { padding: 14px; border-radius: 10px; background: var(--teal-soft); overflow-wrap: anywhere; }
+.cloud-dialog form { display: grid; gap: 10px; margin: 18px 0; }
+.cloud-dialog input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); }
+.cloud-dialog form .button { margin-top: 8px; }
+.cloud-conflict { margin-top: 18px; padding: 14px; border: 1px solid #e9d09e; border-radius: 10px; background: var(--gold-soft); }
+.cloud-help { margin: 18px 0; font-size: .8125rem; }
+.cloud-help a { color: var(--teal); }
+#cloudButton[data-state="synced"] { color: #146b51; background: #e9f6ee; }
+#cloudButton[data-state="conflict"], #cloudButton[data-state="offline"] { color: #815a0e; background: #fff2d2; }
 body { margin: 0; min-width: 280px; background: var(--bg); color: var(--ink); }
 button, input, select, textarea { font: inherit; }
 button, label.button { -webkit-tap-highlight-color: transparent; }

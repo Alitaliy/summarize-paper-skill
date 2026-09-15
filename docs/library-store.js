@@ -28,18 +28,21 @@
     return validate(snapshot);
   }
 
-  async function open({ normalizePaper } = {}) {
+  async function open({ normalizePaper, namespace = "" } = {}) {
+    const databaseName = namespace ? `${DB}:${namespace}` : DB;
+    const fallbackKey = namespace ? `${FALLBACK}:${namespace}` : FALLBACK;
+    const initialData = () => namespace ? empty() : legacy(normalizePaper);
     let db = null;
     const subscribers = new Set();
-    const channel = root.BroadcastChannel ? new root.BroadcastChannel(DB) : null;
+    const channel = root.BroadcastChannel ? new root.BroadcastChannel(databaseName) : null;
     if (channel) channel.onmessage = () => subscribers.forEach(fn => fn());
-    const storageListener = event => { if (event.key === FALLBACK || event.key === null) subscribers.forEach(fn => fn()); };
+    const storageListener = event => { if (event.key === fallbackKey || event.key === null) subscribers.forEach(fn => fn()); };
     root.addEventListener?.("storage", storageListener);
     try {
     if (root.indexedDB) {
       db = await new Promise((resolve, reject) => {
         let blocked = false;
-        const request = root.indexedDB.open(DB, 1);
+        const request = root.indexedDB.open(databaseName, 1);
         request.onupgradeneeded = () => {
           request.result.createObjectStore("papers", { keyPath: "id" });
           request.result.createObjectStore("meta");
@@ -52,7 +55,7 @@
       // Read legacy data before the transaction, but decide initialization inside it.
       const initialized = await read();
       if (!initialized) {
-        const initial = legacy(normalizePaper);
+        const initial = initialData();
         await transaction("readwrite", (tx, done, fail) => {
           const meta = tx.objectStore("meta"), request = meta.get("state");
           request.onsuccess = () => {
@@ -69,9 +72,9 @@
         });
       }
     } else {
-      const initial = legacy(normalizePaper);
+      const initial = root.localStorage.getItem(fallbackKey) === null ? initialData() : validate(JSON.parse(root.localStorage.getItem(fallbackKey)));
       // Do not erase the v1/v2 keys: they are the pre-upgrade recovery copy.
-      if (root.localStorage.getItem(FALLBACK) === null) root.localStorage.setItem(FALLBACK, JSON.stringify(initial));
+      if (root.localStorage.getItem(fallbackKey) === null) root.localStorage.setItem(fallbackKey, JSON.stringify(initial));
     }
     } catch (error) {
       db?.close(); channel?.close(); root.removeEventListener?.("storage", storageListener); throw error;
@@ -89,19 +92,20 @@
     }
 
     async function read() {
-      if (!db) return validate(JSON.parse(root.localStorage.getItem(FALLBACK)));
+      if (!db) return validate(JSON.parse(root.localStorage.getItem(fallbackKey)));
       return transaction("readonly", (tx, done) => {
         const state = tx.objectStore("meta").get("state"), papers = tx.objectStore("papers").getAll();
         const settings = tx.objectStore("meta").get("analysis_settings");
+        const sync = tx.objectStore("meta").get("sync");
         let completed = 0;
         const finish = () => {
-          if (++completed === 3) done(state.result ? { ...state.result, papers: papers.result, analysis_settings: settings.result ?? state.result.analysis_settings ?? {} } : null);
+          if (++completed === 4) done(state.result ? { ...state.result, papers: papers.result, analysis_settings: settings.result ?? state.result.analysis_settings ?? {}, ...(sync.result === undefined ? {} : { sync: sync.result }) } : null);
         };
-        state.onsuccess = finish; papers.onsuccess = finish; settings.onsuccess = finish;
+        state.onsuccess = finish; papers.onsuccess = finish; settings.onsuccess = finish; sync.onsuccess = finish;
       }).then(snapshot => snapshot && validate(snapshot));
     }
 
-    async function commit({ puts = [], deletes = [], settings, expectedRevision }) {
+    async function commit({ puts = [], deletes = [], settings, sync, expectedRevision }) {
       let revision;
       if (!db) {
         const write = async () => {
@@ -110,10 +114,10 @@
           const papers = new Map(snapshot.papers.map(paper => [paper.id, paper]));
           deletes.forEach(id => papers.delete(id)); puts.forEach(paper => papers.set(paper.id, copy(paper)));
           revision = snapshot.revision + 1;
-          const next = validate({ ...snapshot, revision, papers: [...papers.values()], analysis_settings: settings ?? snapshot.analysis_settings });
-          root.localStorage.setItem(FALLBACK, JSON.stringify(next));
+          const next = validate({ ...snapshot, revision, papers: [...papers.values()], analysis_settings: settings ?? snapshot.analysis_settings, ...(sync === undefined ? {} : { sync }) });
+          root.localStorage.setItem(fallbackKey, JSON.stringify(next));
         };
-        if (root.navigator?.locks) await root.navigator.locks.request(DB, write); else await write();
+        if (root.navigator?.locks) await root.navigator.locks.request(databaseName, write); else await write();
       } else {
         revision = await transaction("readwrite", (tx, done, fail) => {
           const meta = tx.objectStore("meta"), request = meta.get("state");
@@ -127,6 +131,7 @@
             const { analysis_settings: legacySettings, ...stateBase } = state;
             meta.put({ ...stateBase, revision }, "state");
             if (settings !== undefined || legacySettings !== undefined) meta.put(settings ?? legacySettings, "analysis_settings");
+            if (sync !== undefined) meta.put(sync, "sync");
             done(revision);
             } catch (error) { fail(error); }
           };

@@ -47,6 +47,9 @@ let watchedImportFileCount = 0;
 let skippedScanIssueCount = 0;
 let importErrorCount = 0;
 let repository = null;
+let localRepository = null;
+let unsubscribeRepository = null;
+let remoteAnalysis = null;
 let revision = 0;
 let dataRevision = 0;
 let analysisSettings = {};
@@ -63,6 +66,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   hydrateFilters();
   try {
     repository = await LibraryStore.open({ normalizePaper });
+    localRepository = repository;
     await loadLibrary();
   } catch (error) {
     repository?.close(); repository = null;
@@ -74,6 +78,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     getRevision: () => dataRevision,
     getSettings: () => analysisSettings,
     getModel: () => citationModel,
+    getRemoteAnalysis: options => remoteAnalysis?.(options),
     saveSettings: settings => runMutation(async () => {
       const next = { ...settings, identities: combineSettings(analysisSettings, settings).identities };
       const model = CitationIndex.build(library, next);
@@ -85,12 +90,49 @@ document.addEventListener("DOMContentLoaded", async () => {
     openPaper: (id) => openDetail(id, { ignoreFilters: true }),
     notify: toast,
   });
-  repository?.subscribe(() => {
-    runMutation(async () => { await loadLibrary(); window.CitationAnalytics?.replaceSettings(analysisSettings); render(); }).catch(() => {});
-  });
+  subscribeRepository();
   render();
   if (repository) await restoreWatchedDirectory();
+  if (repository) window.CloudUI?.init({ normalizePaper,
+    localSnapshot: () => localRepository.read(),
+    useStore: switchRepository, useLocal: () => switchRepository(localRepository),
+    importLocal: snapshot => mergePapers(snapshot.papers.map(normalizePaper), "本地库迁移", { settings: snapshot.analysis_settings, forceToast: true }),
+    exportCurrent: exportLibrary,
+    exportSnapshot: (snapshot, name) => downloadJson(PaperData.backup(snapshot.papers, snapshot.analysis_settings), `${name}-${Date.now()}.json`),
+    setRemoteAnalysis: fn => { remoteAnalysis = fn; },
+  }).catch(error => showStorageError(`云端登录暂不可用：${error.message}。本地库仍可使用。`));
 });
+
+function subscribeRepository() {
+  unsubscribeRepository?.();
+  const source = repository;
+  unsubscribeRepository = source?.subscribe(() => {
+    runMutation(async () => {
+      if (repository !== source) return;
+      const changed = await loadLibrary();
+      if (changed) { window.CitationAnalytics?.replaceSettings(analysisSettings); render(); }
+    }).catch(() => {});
+  });
+}
+
+async function switchRepository(next) {
+  if (repository === next) return;
+  await runMutation(async () => {
+    const previous = repository;
+    repository = next;
+    try { await loadLibrary(); } catch (error) { repository = previous; await loadLibrary(); throw error; }
+    subscribeRepository(); closeDetail();
+    // Selecting an account does not silently grant it a folder from another account.
+    clearInterval(scanTimer); watchedDirectoryHandle = null; scanCache.clear(); lastScanSignature = "";
+    watchedFileCount = watchedFolderCount = watchedImportFileCount = skippedScanIssueCount = importErrorCount = 0; lastScanAt = null;
+    updateWatchStatus("idle");
+    els.clearLibraryButton.textContent = next.backend === "supabase" ? "清空云端库" : "清空本地库";
+    const description = document.getElementById("storageDescription");
+    if (description) description.textContent = next.backend === "supabase" ? "支持 Excel、JSON、Markdown；登录账号内同步，本机保留缓存" : "支持 Excel、JSON、Markdown；数据保存在当前浏览器";
+    window.CitationAnalytics?.replaceSettings(analysisSettings); render();
+  });
+  await restoreWatchedDirectory();
+}
 
 function bindElements() {
   Object.assign(els, {
@@ -210,11 +252,11 @@ function bindEvents() {
   els.migrationButton.addEventListener("click", exportMigration);
 
   els.clearLibraryButton.addEventListener("click", async () => {
-    if (!library.length || !confirm("清空当前浏览器中的全部文献总结？监听目录中的原始文件不会被删除。")) return;
+    if (!library.length || !confirm(repository?.backend === "supabase" ? "清空此账号的云端文献库？此删除会同步至其他设备。监听目录中的原始文件不会被删除。" : "清空当前浏览器中的全部文献总结？监听目录中的原始文件不会被删除。")) return;
     try { await runMutation(async () => {
       await saveLibrary({ deletes: library.map(paper => paper.id) });
       library = []; dataChanged(); citationModel = CitationIndex.build(library, analysisSettings);
-      render(); toast("本地文献库已清空");
+      render(); toast(repository.backend === "supabase" ? "文献库已清空，等待同步" : "本地文献库已清空");
     }); } catch { /* Persistent status contains the failure. */ }
   });
 
@@ -251,6 +293,10 @@ async function loadLibrary() {
   const saved = await repository.read();
   const loaded = saved.papers.map(normalizePaper);
   if (loaded.some(paper => !paper)) throw new Error("存在无法读取的文献记录");
+  loaded.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  if (citationModel && window.CloudData?.equal(loaded, library) && window.CloudData.equal(saved.analysis_settings, analysisSettings)) {
+    revision = saved.revision; return false;
+  }
   library = loaded;
   library.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
   revision = saved.revision;
@@ -260,6 +306,7 @@ async function loadLibrary() {
   const next = CitationIndex.normalizeSettings({ ...analysisSettings, identities: citationModel.identities });
   if (JSON.stringify(next) !== JSON.stringify(analysisSettings)) await saveLibrary({ settings: next });
   analysisSettings = next;
+  return true;
 }
 
 function dataChanged() { dataRevision += 1; searchCache = new WeakMap(); }
@@ -332,6 +379,7 @@ async function restoreWatchedDirectory() {
 
 async function startWatchingDirectory(showToast) {
   if (!watchedDirectoryHandle) return;
+  const source = repository;
   const allowed = await ensureReadPermission(watchedDirectoryHandle, true);
   if (!allowed) {
     updateWatchStatus("needs-permission");
@@ -342,13 +390,14 @@ async function startWatchingDirectory(showToast) {
   clearInterval(scanTimer);
   updateWatchStatus("scanning");
   const started = await scanWatchedDirectory({ showToast });
-  if (!started) return;
+  if (!started || repository !== source) return;
   scanTimer = setInterval(() => scanWatchedDirectory({ showToast: false }), SCAN_INTERVAL_MS);
   updateWatchStatus("watching");
 }
 
 async function scanWatchedDirectory({ showToast }) {
   if (!watchedDirectoryHandle || scanning) return false;
+  const source = repository;
   scanning = true;
   try {
     const scanStats = createScanStats();
@@ -387,7 +436,9 @@ async function scanWatchedDirectory({ showToast }) {
         }
       }
       importErrorCount = errors.length;
-      if (papers.length || settings) await mergePapers(papers, "自动扫描", { quietWhenNoChange: true, settings });
+      if (repository !== source) return false;
+      if (papers.length || settings) await mergePapers(papers, "自动扫描", { quietWhenNoChange: true, settings, repository: source });
+      if (repository !== source) return false;
       pendingCache.forEach(([path, value]) => scanCache.set(path, value));
       if (showToast && !errors.length) toast(`扫描完成：已读取 ${papers.length} 篇论文`);
       if (errors.length && showToast) toast(`部分文件未导入：${errors.slice(0, 3).join("；")}`);
@@ -491,12 +542,14 @@ async function ensureReadPermission(handle, requestIfNeeded) {
 
 function saveDirectoryHandle(handle) {
   if (!window.indexedDB) return Promise.resolve();
-  return withHandleStore("readwrite", (store) => store.put(handle, HANDLE_KEY));
+  const key = repository?.namespace ? `${HANDLE_KEY}:${repository.namespace}` : HANDLE_KEY;
+  return withHandleStore("readwrite", (store) => store.put(handle, key));
 }
 
 function readDirectoryHandle() {
   if (!window.indexedDB) return Promise.resolve(null);
-  return withHandleStore("readonly", (store) => store.get(HANDLE_KEY));
+  const key = repository?.namespace ? `${HANDLE_KEY}:${repository.namespace}` : HANDLE_KEY;
+  return withHandleStore("readonly", (store) => store.get(key));
 }
 
 function withHandleStore(mode, action) {
@@ -517,6 +570,7 @@ function withHandleStore(mode, action) {
 
 async function importFiles(files, sourceLabel) {
   if (!files.length) return;
+  const source = repository;
   const imported = [];
   const errors = [];
   let settings;
@@ -532,7 +586,7 @@ async function importFiles(files, sourceLabel) {
   }
 
   if (imported.length) {
-    try { await mergePapers(imported, sourceLabel, { forceToast: true, settings }); }
+    try { await mergePapers(imported, sourceLabel, { forceToast: true, settings, repository: source }); }
     catch (error) { errors.push(error.message); }
   }
   if (errors.length) toast(`部分文件导入失败：${errors.join("；")}`);
@@ -984,6 +1038,7 @@ function combineSettings(current, incoming = {}) {
 
 async function mergePapers(papers, sourceLabel, options = {}) {
   return runMutation(async () => {
+    if (options.repository && repository !== options.repository) throw new Error("导入期间文献库已切换，请在目标文献库中重新导入");
     let added = 0, updated = 0, skipped = 0;
     const next = new Map(library.map(paper => [paper.id, paper]));
     const byTitle = new Map(library.map(paper => [normalizeKey(paper.title), paper]));
@@ -1191,7 +1246,7 @@ function renderCards(papers) {
     const referenceCount = paperReferences(paper).length;
     count.textContent = referenceCount ? `${paper.rows.length} 点 · ${referenceCount} 篇引用` : `${paper.rows.length} 点 · 滚动/点击`;
     const deleteButton = button("删", "tiny-button");
-    deleteButton.title = "从浏览器本地库删除这篇文献";
+    deleteButton.title = repository?.backend === "supabase" ? "删除这篇文献并同步至其他设备" : "从浏览器本地库删除这篇文献";
     deleteButton.addEventListener("click", (event) => {
       event.stopPropagation();
       deletePaper(paper.id);
@@ -1478,7 +1533,7 @@ async function deletePaper(id) {
     await saveLibrary({ deletes: [id] });
     library = library.filter((item) => item.id !== id); dataChanged();
     citationModel = CitationIndex.build(library, analysisSettings);
-    closeDetail(); render(); toast("已从本地文献库删除");
+    closeDetail(); render(); toast(repository.backend === "supabase" ? "已删除，等待同步" : "已从本地文献库删除");
   }); } catch { /* Keep the original record if the transaction fails. */ }
 }
 
@@ -1494,7 +1549,7 @@ async function exportMigration() {
   try {
     const bundle = PaperMigration.build(PaperData.backup(library, analysisSettings, revision));
     downloadJson(bundle, "summarize-paper-migration");
-    toast(`迁移包已导出：${bundle.counts.papers} 篇论文、${bundle.counts.works} 篇被引文献；数据仍保存在本地`);
+    toast(`迁移包已导出：${bundle.counts.papers} 篇论文、${bundle.counts.works} 篇被引文献`);
   } catch (error) { toast(`迁移包校验失败：${error.message}`); }
 }
 

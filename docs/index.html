@@ -5,15 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>论文总结管理器</title>
     <meta name="theme-color" content="#142d36" />
-    <link rel="stylesheet" href="./styles.css?v=20260915-local3" />
+    <link rel="stylesheet" href="./styles.css?v=20260915-cloud1" />
     <link rel="stylesheet" href="./analytics.css?v=20260914-analytics" />
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-    <script src="./data-model.js?v=20260915-local3" defer></script>
-    <script src="./library-store.js?v=20260915-local3" defer></script>
-    <script src="./citation-index.js?v=20260915-local3" defer></script>
-    <script src="./migration.js?v=20260915-local3" defer></script>
-    <script src="./analytics.js?v=20260915-local3" defer></script>
-    <script src="./app.js?v=20260915-local3" defer></script>
+    <script src="./data-model.js?v=20260915-cloud1" defer></script>
+    <script src="./library-store.js?v=20260915-cloud1" defer></script>
+    <script src="./citation-index.js?v=20260915-cloud1" defer></script>
+    <script src="./migration.js?v=20260915-cloud1" defer></script>
+    <script src="./vendor/supabase-2.116.0.js" defer></script>
+    <script src="./cloud-config.js?v=20260915-cloud1" defer></script>
+    <script src="./cloud-data.js?v=20260915-cloud1" defer></script>
+    <script src="./cloud-store.js?v=20260915-cloud1" defer></script>
+    <script src="./cloud-ui.js?v=20260915-cloud1" defer></script>
+    <script src="./analytics.js?v=20260915-cloud1" defer></script>
+    <script src="./app.js?v=20260915-cloud1" defer></script>
   </head>
   <body>
     <header class="app-header">
@@ -34,11 +39,13 @@
         <button id="pasteButton" class="button">粘贴 JSON</button>
         <button id="exportButton" class="button">导出库</button>
         <button id="migrationButton" class="button">导出迁移包</button>
+        <button id="cloudButton" class="button" type="button">云端同步</button>
       </div>
     </header>
 
     <main class="app-shell">
       <p id="storageStatus" class="storage-status" role="alert" hidden></p>
+      <p id="cloudBanner" class="cloud-banner" role="status" hidden></p>
       <nav class="page-nav" aria-label="页面导航">
         <a href="#/library" id="libraryNav" aria-current="page">文献库</a>
         <a href="#/citations" id="citationsNav">全局引用分析 <span aria-hidden="true">↗</span></a>
@@ -128,7 +135,7 @@
         <svg class="ui-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 4v11m-4-4 4 4 4-4M4 16v4h16v-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <div>
           <strong>拖入 summarize-paper 输出文件</strong>
-          <span>支持 Excel、JSON、Markdown；数据保存在当前浏览器</span>
+          <span id="storageDescription">支持 Excel、JSON、Markdown；数据保存在当前浏览器</span>
         </div>
       </section>
       </div>
@@ -208,6 +215,30 @@
       </form>
     </dialog>
 
+    <dialog id="cloudDialog" class="cloud-dialog" aria-labelledby="cloudTitle">
+      <div class="dialog-header"><h2 id="cloudTitle">云端文献库</h2><button id="cloudClose" class="icon-button" type="button" aria-label="关闭">×</button></div>
+      <p id="cloudAccount" class="cloud-account"></p>
+      <p id="cloudMessage" class="cloud-message" role="status">登录后选择迁移本地文献库，或使用账号已有的云端库。</p>
+      <form id="cloudLoginForm">
+        <label for="cloudEmail">邮箱</label><input id="cloudEmail" type="email" autocomplete="username" required />
+        <label for="cloudPassword">密码</label><input id="cloudPassword" type="password" autocomplete="current-password" required />
+        <button id="cloudLogin" class="button primary" type="submit">登录</button>
+      </form>
+      <div id="cloudSetup" hidden>
+        <p class="analysis-note">原本地库会保留。合并导入会保留已有星标，按当前导入规则整理同一篇论文。</p>
+        <div class="dialog-actions"><button id="cloudMigrate" class="button primary" type="button">迁移本地库并启用同步</button><button id="cloudUse" class="button" type="button">使用云端库</button><button id="cloudSetupRetry" class="button" type="button">重新检查</button></div>
+      </div>
+      <div id="cloudConnected" hidden>
+        <p class="analysis-note">导入总结、星标和分析设置将自动同步。首次在新设备使用会分批缓存文献，之后仅下载有变化的论文。选择“监听文件夹”可继续自动导入 skill 输出。</p>
+        <div class="dialog-actions"><button id="cloudRetry" class="button primary" type="button">立即同步</button><button id="cloudBackup" class="button" type="button">导出本机库备份</button></div>
+      </div>
+      <div id="cloudConflict" class="cloud-conflict" hidden>
+        <p>请选择保留哪个完整版本。处理前会下载备份；也可以先导出本机库，采用云端版本后再手动导入需要的内容。</p>
+        <div class="dialog-actions"><button id="cloudUseRemote" class="button" type="button">采用云端版本</button><button id="cloudKeepLocal" class="button subtle-danger" type="button">用本机版本替换云端</button></div>
+      </div>
+      <p class="cloud-help"><a href="https://github.com/Alitaliy/summarize-paper-skill/blob/main/migrations/002_cloud_sync.sql" target="_blank" rel="noopener noreferrer">数据库同步配置 SQL</a></p>
+      <button id="cloudLogout" class="button" type="button" hidden>退出登录，返回本地库</button>
+    </dialog>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
   </body>
 </html>
