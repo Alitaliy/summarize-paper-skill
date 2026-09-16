@@ -1233,12 +1233,6 @@ function renderCards(papers) {
     title.textContent = paper.title;
     title.title = paper.title;
 
-    const doi = cardDoiText(paper);
-    const venue = document.createElement("p");
-    venue.className = "paper-card-venue";
-    venue.textContent = doi;
-    venue.title = doi;
-
     const topic = document.createElement("p");
     topic.className = "paper-card-topic";
     topic.textContent = paper.field || inferTopic(paper.rows) || "主题未标注";
@@ -1252,11 +1246,29 @@ function renderCards(papers) {
     const body = document.createElement("div");
     body.className = "paper-card-body";
     body.append(title);
-    if (doi) body.append(venue);
     body.append(topic, brief);
 
     const footer = document.createElement("div");
     footer.className = "paper-card-foot";
+    const doi = cardDoiText(paper);
+    const doiRow = document.createElement("div");
+    doiRow.className = "paper-card-doi";
+    const doiLabel = document.createElement("span");
+    doiLabel.className = "paper-card-doi-label";
+    doiLabel.textContent = "DOI";
+    const doiValue = document.createElement(doi ? "a" : "span");
+    doiValue.className = doi ? "paper-card-doi-link" : "paper-card-doi-missing";
+    doiValue.textContent = doi || "未提供";
+    if (doi) {
+      doiValue.href = `https://doi.org/${doi}`;
+      doiValue.target = "_blank";
+      doiValue.rel = "noopener noreferrer";
+      doiValue.title = `打开 DOI：${doi}`;
+      doiValue.addEventListener("click", event => event.stopPropagation());
+    }
+    doiRow.append(doiLabel, doiValue);
+    const footerMeta = document.createElement("div");
+    footerMeta.className = "paper-card-foot-meta";
     const count = document.createElement("span");
     const referenceCount = paperReferences(paper).length;
     count.textContent = referenceCount ? `${paper.rows.length} 点 · ${referenceCount} 篇引用` : `${paper.rows.length} 点 · 滚动/点击`;
@@ -1266,7 +1278,8 @@ function renderCards(papers) {
       event.stopPropagation();
       deletePaper(paper.id);
     });
-    footer.append(count, deleteButton);
+    footerMeta.append(count, deleteButton);
+    footer.append(doiRow, footerMeta);
 
     card.append(cardHead, body, footer);
     els.paperGrid.append(card);
