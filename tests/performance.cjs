@@ -54,6 +54,8 @@ const fixture = Array.from({ length: 16 }, (_, p) => ({
     };
     vm.runInContext('remoteAnalysis = remoteQuery', context);
     context.location.hash = '#/citations'; callbacks.hashchange();
+    assert.equal(elements.citationRanking.children.length, model.works.length, 'Default ranking renders every cited work');
+    assert.ok(model.works.length > 20, 'Performance fixture covers rankings beyond the old cap');
     const selection = elements.citationSelection.children[0];
     const rank = elements.citationRanking.children[0];
     const details = descendants(elements.citationSelection).find(el => el.className === 'citation-context');
@@ -79,7 +81,8 @@ const fixture = Array.from({ length: 16 }, (_, p) => ({
       assert.equal(preservedContext, true, 'Cloud confirmation preserves expanded citation context');
       assert.equal(elements.citationSelection.children[0], selection);
       assert.equal(elements.citationRanking.children[0], rank);
-      assert.equal(remoteCalls, 1);
+      const completeRankingPages = Math.ceil(model.works.length / 100);
+      assert.equal(remoteCalls, completeRankingPages, 'Complete cloud ranking is fetched in bounded pages');
 
       elements.citationLimit.value = '50'; elements.citationLimit.fire('change');
       assert.equal(elements.citationRanking.children.length, 50);
@@ -87,7 +90,7 @@ const fixture = Array.from({ length: 16 }, (_, p) => ({
       const scheduled = [...pending.values()].find(timer => timer.delay === 250);
       context.location.hash = '#/library'; callbacks.hashchange();
       await scheduled.fn();
-      assert.equal(remoteCalls, 1, 'Leaving analysis cancels scheduled SQL work');
+      assert.equal(remoteCalls, completeRankingPages, 'Leaving analysis cancels scheduled SQL work');
 
       // Reuse must never make corrections/imports invisible.
       const changed = JSON.parse(JSON.stringify(api.getLibrary().find(p => p.id === 'source-0')));

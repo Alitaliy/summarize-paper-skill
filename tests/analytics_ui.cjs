@@ -5,6 +5,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const root = path.join(__dirname, '..');
+const html = fs.readFileSync(path.join(root, 'docs/index.html'), 'utf8');
+assert.match(html, /id="citationLimit"><option value="0">全部文献<\/option>/, 'All cited works are the default ranking view');
 class Element {
   constructor(tagName) { this.tagName = tagName; this.children = []; this.attributes = {}; this.listeners = {}; this.style = {}; this.dataset = {}; this.className = ''; this.value = ''; this.hidden = false; this._text = ''; }
   set textContent(value) { this._text = String(value); this.children = []; }
@@ -33,7 +35,7 @@ let libraryRevision = 1, saveFails = false;
 const library = JSON.parse(JSON.stringify(fixture));
 const before = JSON.stringify(library);
 function session() {
-  const elements = Object.fromEntries([...fs.readFileSync(path.join(root, 'docs/index.html'), 'utf8').matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, new Element('div')]));
+  const elements = Object.fromEntries([...html.matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, new Element('div')]));
   const callbacks = {}, opened = [], messages = [];
   const sandbox = {
     document: { title: '', getElementById: id => elements[id], createElement: tag => new Element(tag), createElementNS: (_, tag) => new Element(tag) },
@@ -64,6 +66,7 @@ assert.equal(opened[1], 'source-a', 'Graph nodes support keyboard navigation');
 elements.citationQuery.value = 'nonexistent'; elements.citationQuery.fire('input');
 assert.ok(elements.citationRanking.textContent.includes('没有匹配结果'));
 elements.citationReset.fire('click');
+assert.equal(elements.citationLimit.value, '0', 'Reset restores the complete ranking');
 elements.citationDirection.value = '方法'; elements.citationDirection.fire('change');
 assert.equal(elements.citationRanking.children.length, 1);
 assert.ok(byClass(elements.citationSelection, 'selected-metric')[0].textContent.includes('1篇来源论文'));

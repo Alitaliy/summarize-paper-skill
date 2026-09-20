@@ -1,7 +1,7 @@
 (function (root) {
   "use strict";
   const index = root.CitationIndex;
-  const state = { query: "", direction: "", limit: 20, selected: "", model: null, settings: index.normalizeSettings() };
+  const state = { query: "", direction: "", limit: 0, selected: "", model: null, settings: index.normalizeSettings() };
   let app;
   let modelRevision = -1;
   let settingsRevision = 0;
@@ -37,8 +37,8 @@
     els.citationDirection.addEventListener("change", () => { state.direction = els.citationDirection.value; renderResults(); });
     els.citationLimit.addEventListener("change", () => { state.limit = Number(els.citationLimit.value); renderResults(); });
     els.citationReset.addEventListener("click", () => {
-      state.query = ""; state.direction = ""; state.limit = 20;
-      els.citationQuery.value = ""; els.citationDirection.value = ""; els.citationLimit.value = "20";
+      state.query = ""; state.direction = ""; state.limit = 0;
+      els.citationQuery.value = ""; els.citationDirection.value = ""; els.citationLimit.value = "0";
       renderResults();
     });
     els.directionForm.addEventListener("submit", async event => {
