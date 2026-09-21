@@ -7,8 +7,13 @@ generating a summary does not upload its contents to GitHub.
 ## One record, three files
 
 Create one UTF-8 JSON record with `paper_title`, paper-level metadata when available,
-the six-dimension `rows`, and the citation groups defined in [citation-map.md](citation-map.md).
+the seven-dimension `rows`, and the citation groups defined in [citation-map.md](citation-map.md).
 Include the three bibliography coverage fields even when no bibliography was supplied.
+
+Order the dimensions as `研究目的`, `研究动机`, `使用技术/方法`, `实验与结果`,
+`主要贡献`, `不足/局限`, `未来前景/后续工作`. The first five answer the questions
+in [five-questions.md](five-questions.md). Each Markdown heading retains its canonical
+dimension name, followed by a quoted question prompt; the prompt is not a claim row.
 
 ```bash
 python scripts/write_summary_outputs.py draft.json --output-dir "paper/Author - Year - Title"
@@ -22,7 +27,7 @@ This standard-library script validates the input before writing:
 
 Do not manually maintain divergent citation lists across formats. After editing a
 classification, regenerate all three from the JSON. The exporter checks unique source
-labels, required classification evidence, reference counts, six summary dimensions,
+labels, required classification evidence, reference counts, seven summary dimensions,
 and explicit limitations. It cannot verify source fidelity or prove a DOI is correct.
 
 Keep source IDs and bibliography order within each direction. Each group has
@@ -32,6 +37,17 @@ Keep source IDs and bibliography order within each direction. Each group has
 The original citation is especially useful when the title cannot be extracted.
 
 ## Reader compatibility
+
+The JSON schema remains version 2 and the workbook keeps the same six summary
+columns; no cloud database migration is needed. Old six-dimension files remain
+readable. The webpage orders known dimensions using the five questions and shows
+a missing-answer notice for questions absent from an unfiltered summary, without
+creating claim rows or changing counts, stars, citations, or stored records.
+These notices describe missing summary content, not a finding that the original
+paper failed to address the question. Re-read the source before upgrading old outputs.
+The unified exporter requires all seven dimensions for new full summaries. The
+Excel-only exporter still accepts old records and sorts their existing claims into
+the current dimension order without filling missing fields.
 
 The webpage's JSON reader uses `reference_groups`. Its Markdown reader recognizes
 `## 引用文献脉络`, `### 大方向：…`, `- 方向概括：…`, and the documented Chinese table

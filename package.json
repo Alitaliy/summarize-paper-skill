@@ -2,7 +2,7 @@
   "name": "summarize-paper-skill",
   "private": true,
   "scripts": {
-    "test": "node tests/citation_index.cjs && node tests/analytics_ui.cjs && node tests/local_data.cjs && node tests/storage.cjs && node tests/app_storage.cjs && node tests/performance.cjs && node tests/cloud_schema.cjs && node tests/cloud_sync.cjs && node tests/cloud_store.cjs && node tests/cloud_ui.cjs && node tests/cloud_app.cjs",
+    "test": "node tests/citation_index.cjs && node tests/analytics_ui.cjs && node tests/local_data.cjs && node tests/storage.cjs && node tests/app_storage.cjs && node tests/summary_questions.cjs && node tests/performance.cjs && node tests/cloud_schema.cjs && node tests/cloud_sync.cjs && node tests/cloud_store.cjs && node tests/cloud_ui.cjs && node tests/cloud_app.cjs",
     "check": "node scripts/check-scripts.cjs"
   },
   "devDependencies": {

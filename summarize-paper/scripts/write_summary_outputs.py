@@ -13,8 +13,8 @@ from pathlib import Path
 from write_paper_summary_excel import (
     KEYS, REFERENCE_HEADERS, REFERENCE_KEYS, flatten_reference_rows, write_xlsx,
 )
+from summary_dimensions import DIMENSIONS, QUESTIONS, ordered_summary_rows
 
-DIMENSIONS = ["研究目的", "主要贡献", "使用技术/方法", "实验与结果", "不足/局限", "未来前景/后续工作"]
 TYPES = {"原文明确", "原文概括", "合理推测", "未提及"}
 TRACEABILITY = {"完整", "部分", "待核查"}
 REFERENCE_STATUSES = {"complete": "引用已完整整理", "partial": "参考文献仅部分可读", "unavailable": "未提供可读参考文献"}
@@ -46,8 +46,7 @@ def validate_summary(data: object) -> dict:
     missing = set(DIMENSIONS) - {row["dimension"] for row in rows}
     if missing:
         raise ValueError(f"Missing summary dimensions: {', '.join(sorted(missing))}")
-    order = DIMENSIONS + list(dict.fromkeys(row["dimension"] for row in rows if row["dimension"] not in DIMENSIONS))
-    rows.sort(key=lambda row: (order.index(row["dimension"]), row["basis_type"] == "合理推测"))
+    rows[:] = ordered_summary_rows(rows)
 
     status = result.get("reference_status")
     if status not in REFERENCE_STATUSES:
@@ -132,6 +131,8 @@ def render_markdown(data: dict) -> str:
     for dimension in dict.fromkeys(row["dimension"] for row in data["rows"]):
         rows = [row for row in data["rows"] if row["dimension"] == dimension]
         lines += [f"### {dimension}", ""]
+        if dimension in QUESTIONS:
+            lines += [f"> {QUESTIONS[dimension]}", ""]
         for row in rows:
             lines.append(f"- 【{row['basis_type']}｜{row['confidence']}】{row['summary']}（依据：{row['evidence']}）")
             if row["review_suggestion"]:

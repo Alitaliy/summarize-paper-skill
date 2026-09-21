@@ -17,7 +17,7 @@ https://alitaliy.github.io/summarize-paper-skill/
 - 动态监听：点击“监听文件夹”，选择 `paper` 总目录或 skill 的归档输出目录；页面会每 5 秒递归扫描子文件夹中的总结输出并自动刷新。
 - 手动导入：直接拖入或选择 `summarize-paper` 生成的 Excel、JSON、Markdown 文件。
 
-网页只围绕 skill 输出的数据进行管理：论文元数据、六类总结，以及按研究方向归并的引用文献。外层缩略卡片只显示标题、DOI、主题和极短内容介绍；点击卡片后可在“论文总结 / 引用脉络”两个页签间切换。引用脉络保留题名、作者、年份、来源、DOI/链接、与本文关系和分类依据，方便继续追踪原始文献。
+网页围绕 skill 输出的数据进行管理：论文元数据、五个核心问题与局限和未来工作，以及按研究方向归并的引用文献。外层卡片显示标题、DOI、主题和内容介绍；点击卡片后可在“论文总结 / 引用脉络”两个页签间切换。总结按五问顺序展示，旧记录缺失的回答会提示待补充，不自动生成新结论。引用脉络保留题名、作者、年份、来源、DOI/链接、与本文关系和分类依据，方便继续追踪原始文献。
 
 
 ## 动态监听输出目录
@@ -77,7 +77,7 @@ $env:SUMMARIZE_PAPER_LIBRARY_DIR = "C:\Users\你的用户名\Desktop\project\sum
 ## Skill 功能概览
 
 - 支持总结 PDF、DOCX、Markdown、纯文本、粘贴片段或已抽取文本形式的论文。
-- 固定覆盖六个维度：`研究目的`、`主要贡献`、`使用技术/方法`、`实验与结果`、`不足/局限`、`未来前景/后续工作`。
+- 依次回答五问：`研究目的`（解决什么问题）、`研究动机`（为什么要解决）、`使用技术/方法`（用了什么办法）、`实验与结果`（结果怎么样）、`主要贡献`（到底贡献了什么），最后保留`不足/局限`和`未来前景/后续工作`，共七个维度。
 - 每条总结必须标注来源类型：`原文明确`、`原文概括`、`合理推测` 或 `未提及`。
 - 每条事实性内容都要求提供简短证据锚点，例如页码、章节、表格、图号或段落位置。
 - 推测内容必须单独标注为 `合理推测`，并使用谨慎措辞。
@@ -85,6 +85,18 @@ $env:SUMMARIZE_PAPER_LIBRARY_DIR = "C:\Users\你的用户名\Desktop\project\sum
 - 参考文献会按研究大方向归并；每条文献只进入一个主要方向，并保留可追踪字段和分类依据。
 - Excel 包含 `论文总结` 与 `引用文献脉络` 两个工作表，网页可从 JSON、Markdown 或 Excel 恢复引用分类。
 - 统一导出会核对原文引用总数、重复编号和分类依据；网页显示完整、部分可读或未提供参考文献的状态。字段缺损的条目可以保留完整引文，便于后续核查。
+
+### 五问覆盖核查与升级
+
+| 问题 | 升级前已有功能 | 本次调整 |
+|---|---|---|
+| 论文解决什么问题？ | 研究目的 | 明确任务、研究对象、目标与条件 |
+| 为什么要解决？ | 未独立要求，可能混在研究目的中 | 新增研究动机，要求说明原文中的不足、需求与意义 |
+| 用了什么办法？ | 使用技术/方法 | 说明流程、核心机制与已有技术的使用方式 |
+| 实验结果怎么样？ | 实验与结果 | 关联数据、对比方法、指标、数值和适用条件 |
+| 这个方法到底贡献了什么？ | 主要贡献 | 移到结果之后，说明新增内容及其证据支持的价值 |
+
+详细写作要求见[五问说明](summarize-paper/references/five-questions.md)。新版统一导出要求七个维度完整，缺少研究动机会报错；原文不支持回答时须明确标注并解释资料限制。旧六维度总结仍能导入网页，单独生成 Excel 也保持兼容。网页仅调整阅读顺序和缺项提示，不改写旧结论或增加总结点数；要补全旧总结，需要依据原文重新整理。
 
 ## 仓库结构
 
@@ -103,10 +115,12 @@ summarize-paper-skill/
     |   `-- openai.yaml
     |-- references/
     |   |-- citation-map.md
+    |   |-- five-questions.md
     |   `-- web-output-contract.md
     `-- scripts/
         |-- archive_summary_outputs.py
         |-- write_summary_outputs.py
+        |-- summary_dimensions.py
         `-- write_paper_summary_excel.py
 ```
 
@@ -156,7 +170,7 @@ Use $summarize-paper to summarize this paper and output Markdown and Excel.
 
 ## 统一生成三种输出
 
-完成原文阅读和引用分类后，把论文元数据、六个维度的总结条目、`reference_groups` 和引用覆盖字段写入同一份 JSON，再运行：
+完成原文阅读和引用分类后，把论文元数据、七个维度的总结条目、`reference_groups` 和引用覆盖字段写入同一份 JSON，再运行：
 
 ```bash
 python summarize-paper/scripts/write_summary_outputs.py draft.json --output-dir "paper/Author - Year - Title"
@@ -174,7 +188,7 @@ python summarize-paper/scripts/write_summary_outputs.py draft.json --output-dir 
 
 统一导出在写入前检查重复引用编号、数量不一致、缺少分类依据等问题。研究方向及引用关系仍需由阅读原文的人或智能体判断。文中的软件、协议文档和网页引用也保留，并明确其资源性质。
 
-完整格式见 [引用分类说明](summarize-paper/references/citation-map.md) 和 [网页接入约定](summarize-paper/references/web-output-contract.md)。以下 JSON 是字段片段；实际统一导出输入应覆盖全部六个总结维度。
+完整格式见 [引用分类说明](summarize-paper/references/citation-map.md) 和 [网页接入约定](summarize-paper/references/web-output-contract.md)。以下 JSON 是字段片段；实际统一导出输入应覆盖全部七个总结维度。
 
 ## 单独生成 Excel
 
@@ -303,7 +317,7 @@ npm test
 
 完成论文总结前，应确认：
 
-- 六个固定维度都已覆盖。
+- 五个核心问题按指定顺序回答，并保留局限和未来工作，共七个维度。
 - 每条事实性总结都有原文证据锚点。
 - 所有推测内容都标注为 `合理推测`。
 - 推测内容没有混入 `原文明确` 或 `原文概括` 行。

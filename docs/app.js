@@ -2,7 +2,14 @@ const HANDLE_DB = "summarize-paper-library-handles";
 const HANDLE_STORE = "handles";
 const HANDLE_KEY = "watch-directory";
 const SCAN_INTERVAL_MS = 5000;
-const DIMENSIONS = ["研究目的", "主要贡献", "使用技术/方法", "实验与结果", "不足/局限", "未来前景/后续工作"];
+const SUMMARY_QUESTIONS = {
+  "研究目的": "论文解决什么问题？",
+  "研究动机": "为什么要解决？",
+  "使用技术/方法": "用了什么办法？",
+  "实验与结果": "实验结果怎么样？",
+  "主要贡献": "这个方法到底贡献了什么？",
+};
+const DIMENSIONS = [...Object.keys(SUMMARY_QUESTIONS), "不足/局限", "未来前景/后续工作"];
 const TYPES = ["原文明确", "原文概括", "合理推测", "未提及"];
 const CONFIDENCES = ["高", "中", "低"];
 const HEADER_MAP = new Map([
@@ -1343,13 +1350,14 @@ function openDetail(id, { ignoreFilters = false } = {}) {
   const paper = library.find((item) => item.id === id);
   if (!paper) return;
   const rows = ignoreFilters ? paper.rows : filterRows(paper.rows, paper);
-  if (detailView?.paper === paper && rows.length === detailView.rows.length && rows.every((row, i) => row === detailView.rows[i])) {
+  const showMissingQuestions = ignoreFilters || (!filters.query && filters.dimension === "all" && filters.type === "all" && filters.confidence === "all");
+  if (detailView?.paper === paper && detailView.showMissingQuestions === showMissingQuestions && rows.length === detailView.rows.length && rows.every((row, i) => row === detailView.rows[i])) {
     selectDetailTab("summary");
     els.detailPanel.classList.add("is-open");
     els.detailPanel.setAttribute("aria-hidden", "false");
     return;
   }
-  detailView = { paper, rows, referencesRendered: false };
+  detailView = { paper, rows, showMissingQuestions, referencesRendered: false };
   const references = paperReferences(paper);
 
   els.detailSource.textContent = paper.sourceFile;
@@ -1363,7 +1371,7 @@ function openDetail(id, { ignoreFilters = false } = {}) {
   els.referenceNote.textContent = referenceStatusText(paper);
   els.referenceNote.hidden = !els.referenceNote.textContent;
 
-  for (const [dimension, groupRows] of groupRowsByDimension(rows)) {
+  for (const [dimension, groupRows] of groupRowsByDimension(rows, { showMissingQuestions })) {
     els.detailRows.append(renderDetailSection(dimension, groupRows));
   }
   els.referenceEmpty.style.display = paper.reference_groups?.length ? "none" : "block";
@@ -1400,12 +1408,23 @@ function selectDetailTab(tab) {
 function renderDetailSection(dimension, rows) {
   const section = document.createElement("section");
   section.className = "detail-section";
+  section.dataset.dimension = dimension;
   const heading = document.createElement("div");
   heading.className = "detail-section-head";
   const title = document.createElement("h3");
-  title.textContent = dimension || "未标注维度";
-  heading.append(title, badge(`${rows.length} 点`));
+  const question = Object.hasOwn(SUMMARY_QUESTIONS, dimension) ? SUMMARY_QUESTIONS[dimension] : "";
+  title.textContent = question ? `${DIMENSIONS.indexOf(dimension) + 1}. ${question}` : (dimension || "未标注维度");
+  const count = rows.length ? `${rows.length} 点` : "待补充";
+  heading.append(title, badge(question ? `${dimension} · ${count}` : count));
   section.append(heading);
+
+  if (!rows.length) {
+    const missing = document.createElement("p");
+    missing.className = "detail-missing-answer";
+    missing.textContent = "当前总结未单独整理这一项，请依据原文补充。";
+    section.append(missing);
+    return section;
+  }
 
   const list = document.createElement("div");
   list.className = "detail-point-list";
@@ -1546,7 +1565,7 @@ function referenceSearchText(paper) {
   ]).join(" ");
 }
 
-function groupRowsByDimension(rows) {
+function groupRowsByDimension(rows, { showMissingQuestions = false } = {}) {
   const known = new Map(DIMENSIONS.map((dimension) => [dimension, []]));
   const other = new Map();
   for (const row of rows) {
@@ -1554,7 +1573,7 @@ function groupRowsByDimension(rows) {
     if (!target.has(row.dimension)) target.set(row.dimension || "未标注维度", []);
     target.get(row.dimension || "未标注维度").push(row);
   }
-  return [...known.entries(), ...other.entries()].filter(([, groupRows]) => groupRows.length);
+  return [...known.entries(), ...other.entries()].filter(([dimension, groupRows]) => groupRows.length || (showMissingQuestions && Object.hasOwn(SUMMARY_QUESTIONS, dimension)));
 }
 
 function closeDetail() {

@@ -14,7 +14,7 @@ async function run(){
   const local=api.getRepository();let store;
   const settle=()=>vm.runInContext('mutationQueue',context);
   try{
-    const original=api.normalizePaper({title:'An imported source',starred:true,rows:[{dimension:'研究目的',summary:'Test summary'}],
+    const original=api.normalizePaper({title:'An imported source',starred:true,rows:[{dimension:'研究目的',summary:'Test summary'},{dimension:'研究动机',summary:'Motivation supported by the source'}],
       reference_groups:[{direction:'Methods',references:[{title:'One referenced paper',doi:'10.1234/ref'}]}]});
     await api.mergePapers([original],'test');
     const before=await local.read();
@@ -37,6 +37,7 @@ async function run(){
     assert.equal(builds,0,'Star and sync acknowledgement do not rebuild citation index');
     const rows=(await db.query('select public.paper_library_read_papers($1,$2) as r',[(await store.read()).sync.remoteRevision,[original.id]])).rows[0].r;
     assert.equal(rows[0].starred,false);assert.equal(rows[0].reference_groups[0].references.length,1);
+    assert.equal(rows[0].rows.find(row=>row.dimension==='研究动机').summary,'Motivation supported by the source','The new dimension survives cloud round-trip');
     assert.equal((await local.read()).papers[0].starred,true,'Original local library is retained');
     context.nextRepository=local;await vm.runInContext('switchRepository(nextRepository)',context);
     assert.equal(api.getLibrary()[0].starred,true);

@@ -1,13 +1,13 @@
 ---
 name: summarize-paper
-description: Faithful academic paper summarization for papers supplied as PDFs, text, Markdown, Word files, or pasted excerpts. Use when Codex needs to summarize a paper's purpose, contributions, techniques, limitations, and prospects, organize its cited references by research direction, and deliver Markdown and Excel outputs while separating source evidence from cautious inference.
+description: Faithful academic paper summarization from supplied PDFs, text, Markdown, Word files, or excerpts. Answer the problem, motivation, method, experimental results, and contribution in order; retain limitations and prospects, classify cited references by research direction, and deliver consistent Markdown, JSON, and Excel with traceable evidence.
 ---
 
 # Summarize Paper
 
 ## Overview
 
-Use this skill to summarize one academic paper from the user-provided source. Extract the paper's purpose, main contributions, techniques, limitations, and future prospects; organize the paper's bibliography into a traceable citation map; then output Markdown, JSON, and Excel files when the environment can create them.
+Use this skill to summarize one academic paper from the user-provided source. Answer five questions in order: what problem it solves, why that problem matters, how it works, what the experiments show, and what the method contributes. Follow with limitations and future prospects, organize the bibliography into a traceable citation map, and export Markdown, JSON, and Excel from the same claims.
 
 ## Core Rules
 
@@ -19,7 +19,7 @@ Use this skill to summarize one academic paper from the user-provided source. Ex
 - Preserve important details the paper actually states, including task setting, dataset, model/framework, experimental setup, evaluation metrics, and named techniques when relevant.
 - Use short evidence references instead of long quotations. Prefer page, section, table, figure, or paragraph anchors when available.
 - If the paper text is incomplete, scanned, or extraction quality is poor, state that limitation before the summary and avoid filling gaps with confident claims.
-- In user-facing Markdown, group content by the six required dimensions and show multiple claims as bullet points under the same dimension. Do not present repeated `研究目的`, `主要贡献`, or other repeated dimensions as separate visual sections.
+- In user-facing Markdown, group content by the seven required dimensions, with the five core questions first, and show multiple claims as bullet points under the same dimension. Do not repeat dimension headings for individual claims.
 - Keep the structured JSON/Excel rows at claim level for traceability, but ensure the rows are ordered by dimension so downstream pages can group them cleanly.
 - Build citation groups only from bibliographic entries and citation context present in the supplied paper. Never invent a reference title, author, venue, DOI, URL, or research direction.
 - Keep each legible bibliographic entry once under one primary research direction. When classification is uncertain, use `待核查/方向不明` and state why.
@@ -32,14 +32,15 @@ Use this skill to summarize one academic paper from the user-provided source. Ex
 1. Identify the paper source type: PDF, DOCX, Markdown, plaintext, pasted excerpt, or extracted text.
 2. Read the abstract, introduction, method, experiments/results, discussion, limitations, and conclusion first.
 3. Scan the remaining body for claims that affect the required categories.
-4. Build a claim list with evidence anchors before drafting the final summary.
-5. Fill the required dimensions:
-   - `研究目的`
-   - `主要贡献`
-   - `使用技术/方法`
-   - `实验与结果`
-   - `不足/局限`
-   - `未来前景/后续工作`
+4. Read [references/five-questions.md](references/five-questions.md), then build a claim list with evidence anchors. Separate the task from its motivation, the method from its contribution, and reported results from claims about their significance.
+5. Fill these dimensions in exactly this order. Keep these canonical names in `rows[].dimension` and Markdown headings:
+   - `研究目的` — 论文解决什么问题？
+   - `研究动机` — 为什么要解决？
+   - `使用技术/方法` — 用了什么办法？
+   - `实验与结果` — 实验结果怎么样？
+   - `主要贡献` — 这个方法到底贡献了什么？
+   - `不足/局限` — supplementary analysis
+   - `未来前景/后续工作` — supplementary analysis
 6. For each dimension, include all material points explicitly present in the paper.
 7. Add cautious inferred items only after all original-content items, and label them clearly as `合理推测`.
 8. Read [references/citation-map.md](references/citation-map.md), inspect the bibliography and citation contexts, count the source entries, then extract and classify every legible entry. Use `reference_status`, `reference_count_expected`, and `reference_note` to record coverage, including when the bibliography is unavailable.
@@ -66,22 +67,35 @@ Use this structure:
 
 ## 总览
 
-<用 3-6 句话概括论文解决的问题、方法和结论。只写原文可支持的信息。>
+<按问题、动机、方法、结果、贡献的逻辑概括论文，只写原文可支持的信息。>
 
 ## 逐项总结
 
 ### 研究目的
+> 论文解决什么问题？
+
 - 【原文明确｜高】...（依据：Abstract; Introduction）
 - 【原文概括｜高】...（依据：Introduction）
 
-### 主要贡献
-- 【原文明确｜高】...（依据：Contribution bullets）
+### 研究动机
+> 为什么要解决？
+
+- 【原文概括｜高】...（依据：Introduction; Related Work）
 
 ### 使用技术/方法
+> 用了什么办法？
+
 - 【原文明确｜高】...（依据：Method）
 
 ### 实验与结果
+> 实验结果怎么样？
+
 - 【原文明确｜高】...（依据：Experiments; Table 1）
+
+### 主要贡献
+> 这个方法到底贡献了什么？
+
+- 【原文概括｜高】...（依据：Contribution bullets; Method; Experiments）
 
 ### 不足/局限
 - 【原文明确｜高】...（依据：Limitations; Conclusion）
@@ -205,9 +219,9 @@ Expected JSON shape:
 }
 ```
 
-Keep JSON and Excel rows as claim-level records, ordered by the six required dimensions. Keep `reference_groups` grouped by direction and references in bibliography order within each group. Include paper-level JSON metadata when available so the literature management webpage can render compact cards and a separate citation-map view.
+Keep JSON and Excel rows as claim-level records, ordered by the seven required dimensions. The first five answer the five questions above; limitations and future work follow. Keep `reference_groups` grouped by direction and references in bibliography order within each group. Include paper-level JSON metadata when available so the literature management webpage can render compact cards and a separate citation-map view.
 
-The abbreviated JSON above illustrates fields, not a complete six-dimension summary. The unified exporter checks all six dimensions. Use `partial` when only part of the bibliography can be recovered, or `unavailable` with `reference_groups: []` when it cannot be read. In both cases supply a source-specific `reference_note`. Do not label a selected subset of references as `complete`.
+The abbreviated JSON above illustrates fields, not a complete summary. The unified exporter requires all seven dimensions, including `研究动机`; do not synthesize missing answers to pass validation. Old six-dimension outputs remain readable by the webpage and the Excel-only exporter. To upgrade an old summary, return to its source before adding motivation or strengthening contribution claims. Use `partial` when only part of the bibliography can be recovered, or `unavailable` with `reference_groups: []` when it cannot be read. In both cases supply a source-specific `reference_note`. Do not label a selected subset of references as `complete`.
 
 ## Library Archive Output
 
@@ -233,6 +247,8 @@ The webpage can monitor the archive inbox or the parent `paper` folder and autom
 Before finishing:
 
 - Confirm each required dimension is present exactly once as a Markdown heading.
+- Confirm the five questions appear in the requested order and are answered independently; motivation must not be omitted or merely repeat the task, and contribution must identify what is added and what evidence supports its value.
+- Confirm experimental claims identify the evaluation setting and preserve reported metrics, values, and units when available. State missing experiments or evidence explicitly.
 - Confirm multiple points inside a dimension are bullets under that heading, not repeated dimension blocks.
 - Confirm every factual summary item has an evidence anchor.
 - Confirm every inferred item is labeled `合理推测`.

@@ -1,5 +1,7 @@
 """Portable exporter checks and round trips through the actual webpage readers."""
 import json
+import copy
+import re
 import shutil
 import subprocess
 import sys
@@ -13,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "summarize-paper" / "scripts"))
 from write_summary_outputs import DIMENSIONS, validate_summary, write_outputs
 from write_paper_summary_excel import write_xlsx
+
+EXPECTED_DIMENSIONS = ["研究目的", "研究动机", "使用技术/方法", "实验与结果", "主要贡献", "不足/局限", "未来前景/后续工作"]
 
 
 def fixture():
@@ -66,6 +70,36 @@ def workbook_matrices(path):
 
 
 class OutputContractTests(unittest.TestCase):
+    def test_five_question_order_in_all_exports(self):
+        data = fixture()
+        data["rows"] = list(reversed(data["rows"]))
+        before = copy.deepcopy(data)
+        with tempfile.TemporaryDirectory() as directory:
+            paths = write_outputs(data, Path(directory))
+            saved = json.loads(paths["json"].read_text(encoding="utf-8"))
+            self.assertEqual([r["dimension"] for r in saved["rows"]], EXPECTED_DIMENSIONS)
+            markdown = paths["markdown"].read_text(encoding="utf-8").split("## 引用文献脉络")[0]
+            self.assertEqual(re.findall(r"^### (.+)$", markdown, re.M), EXPECTED_DIMENSIONS)
+            self.assertEqual(re.findall(r"^> (.+)$", markdown, re.M), [
+                "论文解决什么问题？", "为什么要解决？", "用了什么办法？", "实验结果怎么样？", "这个方法到底贡献了什么？"])
+            sheet = workbook_matrices(paths["excel"])["Sheets"]["论文总结"]
+            self.assertEqual([r[0] for r in sheet[2:]], EXPECTED_DIMENSIONS)
+            # The independent Excel command must use the same order for unsorted input.
+            write_xlsx(data, Path(directory) / "independent.xlsx")
+            independent = workbook_matrices(Path(directory) / "independent.xlsx")["Sheets"]["论文总结"]
+            self.assertEqual(independent, sheet)
+        self.assertEqual(data, before, "Export must not rewrite the caller's source claims")
+
+    def test_new_summary_requires_motivation_but_allows_explicit_missing_evidence(self):
+        data = fixture()
+        data["rows"] = [r for r in data["rows"] if r["dimension"] != "研究动机"]
+        with self.assertRaisesRegex(ValueError, "研究动机"):
+            validate_summary(data)
+        missing = {"dimension": "研究动机", "basis_type": "未提及", "summary": "所提供片段未包含研究动机。",
+                   "evidence": "仅提供方法与实验部分，缺少引言。", "confidence": "", "review_suggestion": "补充引言后核查。"}
+        data["rows"].append(missing)
+        self.assertEqual(validate_summary(data)["rows"][1], missing)
+
     def test_unified_command_line(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "draft.json"
@@ -125,12 +159,14 @@ class OutputContractTests(unittest.TestCase):
     def test_legacy_excel_command_and_empty_reference_fields(self):
         with tempfile.TemporaryDirectory() as directory:
             data = fixture()
+            data["rows"] = [r for r in data["rows"] if r["dimension"] != "研究动机"]
             del data["reference_groups"]
             del data["reference_status"]
             output = Path(directory) / "legacy.xlsx"
             write_xlsx(data, output)
             matrices = workbook_matrices(output)
             self.assertEqual(len(matrices["Sheets"]["论文总结"]), 8)
+            self.assertNotIn("研究动机", [row[0] for row in matrices["Sheets"]["论文总结"][2:]], "Legacy export must not invent an answer")
             self.assertEqual(len(matrices["Sheets"]["引用文献脉络"]), 3)
 
     def test_zero_references_is_distinct_from_unavailable(self):

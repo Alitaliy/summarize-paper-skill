@@ -11,6 +11,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from xml.sax.saxutils import escape
+from summary_dimensions import ordered_summary_rows
 
 
 HEADERS = [
@@ -206,6 +207,7 @@ def write_xlsx(data: dict[str, object], output_path: Path) -> None:
     rows = data.get("rows")
     if not isinstance(rows, list):
         raise ValueError("JSON must contain a 'rows' array.")
+    rows = ordered_summary_rows(rows)
     reference_rows = flatten_reference_rows(data)
 
     sheet_name = sanitize_sheet_name("论文总结")
